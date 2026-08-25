@@ -1,0 +1,889 @@
+{
+  "info": {
+    "name": "ProfileSvr",
+    "description": "End-to-end tests for the ProfileSvr microservice.\n\n**How to use**\n1. Set `baseUrl`, `email`, `password` in the collection variables.\n2. Run requests top-to-bottom inside each folder. Scripts auto-save `deviceId`, `retrievalCode`, `profileId`, `accessToken` between steps.\n3. Whenever a step sends an OTP (by email or WhatsApp), read the 6-digit code and paste it into the `otp` collection variable before the next request.\n\nEvery response is the `{isSuccess, data, message}` envelope \u2014 `message` is always populated (specific per step, e.g. \"OTP sent to your email address.\", or \"Operation successful.\").\n\nAssumes `Encryption:Enabled` is false; with payload encryption on, bodies must be wrapped in the `{\"data\": ...}` envelope.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5107"
+    },
+    {
+      "key": "email",
+      "value": "testuser1@maildrop.cc"
+    },
+    {
+      "key": "password",
+      "value": "Test-Pass-2026!"
+    },
+    {
+      "key": "otp",
+      "value": "000000"
+    },
+    {
+      "key": "phone",
+      "value": "+2348012345678"
+    },
+    {
+      "key": "bvn",
+      "value": "22233344455"
+    },
+    {
+      "key": "pin",
+      "value": "1234"
+    },
+    {
+      "key": "newPin",
+      "value": "5678"
+    },
+    {
+      "key": "deviceIdentifier",
+      "value": "postman-device-1"
+    },
+    {
+      "key": "deviceId",
+      "value": ""
+    },
+    {
+      "key": "retrievalCode",
+      "value": ""
+    },
+    {
+      "key": "profileId",
+      "value": ""
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "refreshToken",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0 \u00b7 Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": "{{baseUrl}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('healthy envelope with message', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.isSuccess).to.be.true;",
+                  "  pm.expect(b.data.status).to.eql('healthy');",
+                  "  pm.expect(b.message).to.eql('Operation successful.');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1 \u00b7 Onboarding",
+      "item": [
+        {
+          "name": "1. initiate (email OTP sent)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": "{{baseUrl}}/api/onboarding/initiate",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailAddress\": \"{{email}}\",\n  \"device\": {\n    \"deviceIdentifier\": \"{{deviceIdentifier}}\",\n    \"name\": \"Postman Device\",\n    \"platform\": \"web\",\n    \"osName\": \"macOS\",\n    \"osVersion\": \"14\",\n    \"manufacturer\": \"Apple\",\n    \"model\": \"MacBook\",\n    \"appVersion\": \"1.0.0\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('202 + retrievalCode + message', () => {",
+                  "  pm.expect(pm.response.code).to.eql(202);",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.message).to.eql('OTP sent to your email address.');",
+                  "  pm.collectionVariables.set('deviceId', b.data.deviceId);",
+                  "  pm.collectionVariables.set('retrievalCode', b.data.retrievalCode);",
+                  "});",
+                  "console.log('>> Now read the email OTP and set the `otp` variable.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. verify-auth (paste otp first)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": "{{baseUrl}}/api/onboarding/verify-auth",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailAddress\": \"{{email}}\",\n  \"deviceId\": \"{{deviceId}}\",\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('201 \u00b7 auth created + onboarding tokens', () => {",
+                  "  pm.expect(pm.response.code).to.eql(201);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.status).to.eql('AuthCreated');",
+                  "  pm.expect(d.type).to.eql('onboarding');",
+                  "  pm.collectionVariables.set('profileId', d.profileId);",
+                  "  if (d.tokens) {",
+                  "    pm.collectionVariables.set('accessToken', d.tokens.accessToken);",
+                  "    pm.collectionVariables.set('refreshToken', d.tokens.refreshToken);",
+                  "    console.log('>> Onboarding tokens saved \u2014 steps 4-6 work without the login step.');",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/login",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"deviceId\": \"{{deviceId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('tokens + profile DTO + deviceStatus', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.message).to.eql('Login successful.');",
+                  "  const d = b.data;",
+                  "  pm.expect(d.accessToken).to.be.a('string');",
+                  "  pm.expect(['New', 'Existing', 'Unlinked']).to.include(d.deviceStatus);",
+                  "  pm.collectionVariables.set('accessToken', d.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', d.refreshToken);",
+                  "  if (d.profile) {",
+                  "    pm.collectionVariables.set('profileId', d.profile.profileId);",
+                  "    pm.collectionVariables.set('deviceId', d.profile.activeDeviceId);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. initiate-phone (WhatsApp OTP sent)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/onboarding/initiate-phone",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"{{phone}}\",\n  \"deviceId\": \"{{deviceId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('202 + retrievalCode', () => {",
+                  "  pm.expect(pm.response.code).to.eql(202);",
+                  "  pm.collectionVariables.set('retrievalCode', pm.response.json().data.retrievalCode);",
+                  "});",
+                  "console.log('>> Read the WhatsApp OTP and set the `otp` variable.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. otp/verify \u00b7 section Phone",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/otp/verify",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"section\": \"Phone\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('phone confirmed', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.message).to.eql('Phone number verified.');",
+                  "  pm.expect(b.data.phoneNumberConfirmed).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. create-profile (\u2192 Active)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/onboarding/create-profile",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"firstName\": \"Test\",\n  \"lastName\": \"User\",\n  \"middleName\": null,\n  \"dateOfBirth\": \"1995-05-15\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status Active', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.message).to.eql('Profile created successfully.');",
+                  "  pm.expect(b.data.status).to.eql('Active');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 \u00b7 KYC path (alternative to steps 4-6)",
+      "item": [
+        {
+          "name": "initiate-kyc (BVN \u2192 WhatsApp OTP)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/onboarding/initiate-kyc",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"bvn\": \"{{bvn}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('202 + masked phone', () => {",
+                  "  pm.expect(pm.response.code).to.eql(202);",
+                  "  const d = pm.response.json().data;",
+                  "  console.log('OTP sent to', d.maskedPhoneNumber);",
+                  "  pm.collectionVariables.set('retrievalCode', d.retrievalCode);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "otp/verify \u00b7 section Kyc (\u2192 tier 1)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/otp/verify",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"section\": \"Kyc\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('KYC verified, tier 1', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.tier).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 \u00b7 Session",
+      "item": [
+        {
+          "name": "GET /auth/me (reload profile)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/me"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('profile snapshot', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.profileId).to.be.a('string');",
+                  "  console.log('status:', d.status, '| recently linked:', d.deviceRecentlyLinked);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/refresh",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/refresh",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{refreshToken}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('new tokens', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.collectionVariables.set('accessToken', d.accessToken);",
+                  "  if (d.refreshToken) pm.collectionVariables.set('refreshToken', d.refreshToken);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 \u00b7 Transaction PIN",
+      "item": [
+        {
+          "name": "set-pin (first time only)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/profiles/set-pin",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"pin\": \"{{pin}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('pin set (or 409 if already set)', () => {",
+                  "  pm.expect([200, 409]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "pin-change",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/profiles/pin-change",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"currentPin\": \"{{pin}}\",\n  \"newPin\": \"{{newPin}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('pin changed', () => pm.expect(pm.response.json().isSuccess).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "initiate-pin-reset (email OTP)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/profiles/initiate-pin-reset",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('retrievalCode', pm.response.json().data.retrievalCode);",
+                  "console.log('>> Read the email OTP and set the `otp` variable.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "pin-reset (paste otp first)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/profiles/pin-reset",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"newPin\": \"{{newPin}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('pin reset', () => pm.expect(pm.response.json().isSuccess).to.be.true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5 \u00b7 Password",
+      "item": [
+        {
+          "name": "password-change",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/password-change",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"currentPassword\": \"{{password}}\",\n  \"newPassword\": \"{{password}}x1!\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('password changed', () => pm.expect(pm.response.json().isSuccess).to.be.true);",
+                  "console.log('>> Remember: the password variable is now stale \u2014 update it if you keep testing.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "initiate-password-reset (email OTP)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/initiate-password-reset",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('retrievalCode', pm.response.json().data.retrievalCode);",
+                  "console.log('>> Read the email OTP and set the `otp` variable.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "password-reset (paste otp first)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/password-reset",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"newPassword\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('password reset', () => pm.expect(pm.response.json().isSuccess).to.be.true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6 \u00b7 Device switch",
+      "item": [
+        {
+          "name": "initiate-device-change (credentials, no token)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/initiate-device-change",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('retrievalCode', pm.response.json().data.retrievalCode);",
+                  "console.log('>> Read the email OTP and set the `otp` variable.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "change-device (paste otp; registers new device)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/change-device",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{email}}\",\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"device\": {\n    \"deviceIdentifier\": \"{{deviceIdentifier}}-new\",\n    \"name\": \"Replacement Device\",\n    \"platform\": \"web\",\n    \"osName\": \"macOS\",\n    \"osVersion\": \"14\",\n    \"manufacturer\": \"Apple\",\n    \"model\": \"MacBook\",\n    \"appVersion\": \"1.0.0\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('binding moved \u00b7 gate open', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.deviceRecentlyLinked).to.be.true;",
+                  "  pm.collectionVariables.set('deviceId', d.deviceId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7 \u00b7 Resume (SSO account, no profile)",
+      "item": [
+        {
+          "name": "initiate-resume (email OTP)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/onboarding/initiate-resume",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 202) {",
+                  "  pm.collectionVariables.set('retrievalCode', pm.response.json().data.retrievalCode);",
+                  "  console.log('>> Read the email OTP and set the `otp` variable.');",
+                  "} else {",
+                  "  console.log('409 expected when a profile record already exists.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "resume (paste otp first)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/onboarding/resume",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"device\": {\n    \"deviceIdentifier\": \"{{deviceIdentifier}}-resume\",\n    \"name\": \"Postman Resume Device\",\n    \"platform\": \"web\",\n    \"osName\": \"macOS\",\n    \"osVersion\": \"14\",\n    \"manufacturer\": \"Apple\",\n    \"model\": \"MacBook\",\n    \"appVersion\": \"1.0.0\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('record rebuilt (or idempotent)', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.collectionVariables.set('profileId', d.profileId);",
+                  "  pm.collectionVariables.set('deviceId', d.deviceId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8 \u00b7 Profile queries",
+      "item": [
+        {
+          "name": "GET profile by id",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": "{{baseUrl}}/api/profiles/{{profileId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('profile with gates', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  console.log('status:', d.status, '| tier:', d.tier, '| recentlyLinked:', d.deviceRecentlyLinked);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET my devices (history)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/profiles/devices"
+          }
+        },
+        {
+          "name": "GET my activities",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/profiles/activities?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "profiles",
+                "activities"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('audit feed', () => {",
+                  "  const items = pm.response.json().data.items;",
+                  "  items.forEach(i => console.log(i.createdAtUtc, i.type, '\u00b7', i.description, '\u00b7 ip:', i.ipAddress));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET list profiles",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": "{{baseUrl}}/api/profiles?page=1&pageSize=20"
+          }
+        },
+        {
+          "name": "GET device by id",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": "{{baseUrl}}/api/devices/{{deviceId}}"
+          }
+        }
+      ]
+    }
+  ]
+}
