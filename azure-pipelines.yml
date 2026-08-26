@@ -12,7 +12,7 @@ pool:
 
 variables:
   buildConfiguration: 'Release'
-  publishProject: 'src/ProfileSvr.Api/ProfileSvr.Api.csproj'   # adjust to your host project
+  publishProject: '**/ProfileSvr.Api.csproj'   # glob — change the filename to your host project's csproj
 
 steps:
   - task: UseDotNet@2
@@ -20,6 +20,10 @@ steps:
     inputs:
       packageType: 'sdk'
       version: '9.0.x'
+
+  # Temporary — shows every csproj path in the repo so you can confirm publishProject. Remove once it's right.
+  - script: dir /s /b *.csproj
+    displayName: 'List projects (temporary)'
 
   - task: DotNetCoreCLI@2
     displayName: 'Restore'
