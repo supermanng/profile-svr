@@ -12,9 +12,6 @@ pool:
 
 variables:
   buildConfiguration: 'Release'
-  # Publishes every project except test projects. Once you know the host project's
-  # csproj name (see the "List projects" step output), narrow this to e.g. '**/ProfileSvr.Host.csproj'.
-  publishProject: '**/*.csproj;!**/*.Tests.csproj'
 
 steps:
   - task: UseDotNet@2
@@ -23,7 +20,7 @@ steps:
       packageType: 'sdk'
       version: '9.0.x'
 
-  # Temporary — lists every csproj in the repo. Remove once publishProject is narrowed down.
+  # Temporary — lists every csproj in the repo. Remove once the Publish pattern is narrowed to the host project.
   - script: dir /s /b *.csproj
     displayName: 'List projects (temporary)'
 
@@ -53,7 +50,10 @@ steps:
     inputs:
       command: 'publish'
       publishWebProjects: false
-      projects: '$(publishProject)'
+      # One pattern per line. Once you know the host project, replace both lines with e.g. **/ProfileSvr.Host.csproj
+      projects: |
+        **/*.csproj
+        !**/*.Tests.csproj
       arguments: '--configuration $(buildConfiguration) --no-build --output $(Build.ArtifactStagingDirectory)'
       zipAfterPublish: true
 
