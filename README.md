@@ -190,6 +190,18 @@ Table `otp_codes` (codes are stored as SHA-256 hashes bound to purpose + target,
 | `consumed_at_utc` | datetime(6)  | set when verified, superseded or locked |
 | `created_at_utc`  | datetime(6)  |                                         |
 
+## Configuration — secrets
+
+`appsettings.json` carries **no credential values** — only URLs and non-secret settings. Real
+values come from, in order of preference:
+
+1. **Locally**: `src/ProfileSvr/appsettings.Secrets.json` (gitignored, loaded when present) —
+   connection string, SSO/OneCore/DigitVirtual client ids + secrets, AWS keys.
+2. **Deployed**: environment variables (`ConnectionStrings__ProfileDb`, `Sso__ClientSecret`,
+   `AWS__AccessKey`, `AWS__SecretKey`, `OneCore__ClientSecret`, `DigitVirtual__ClientSecret`, …).
+
+Never put credential values back into `appsettings.json`.
+
 ## Configuration — DigitalOcean Managed MySQL
 
 Get the connection details from your DigitalOcean control panel: **Databases → your MySQL cluster → Connection Details** (host, port — usually `25060` — user, password, database). TLS is required by DigitalOcean, so keep `SslMode=Required`.

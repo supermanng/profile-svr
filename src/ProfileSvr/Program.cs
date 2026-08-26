@@ -10,6 +10,11 @@ using Refit;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Credential values live outside source control: locally in appsettings.Secrets.json
+// (gitignored), in deployed environments as environment variables
+// (e.g. ConnectionStrings__ProfileDb, Sso__ClientSecret, AWS__SecretKey).
+builder.Configuration.AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: true);
+
 // Connection string resolution order:
 //   1. env var PROFILESVR_DB (full MySQL connection string)
 //   2. ConnectionStrings:ProfileDb from appsettings / user-secrets

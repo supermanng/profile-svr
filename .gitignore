@@ -1,0 +1,12 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+
+# IDE
+.idea/
+.vs/
+*.user
+
+# Local secrets — never commit credential values
+appsettings.Secrets.json
+appsettings.*.Secrets.json
