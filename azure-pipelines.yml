@@ -1,5 +1,5 @@
 # ProfileSvr — .NET 9 build, test & publish
-# Restores, builds, runs the xUnit unit + integration tests, then publishes the API as a 'drop' artifact.
+# Restores, builds, runs the xUnit unit + integration tests, then publishes all non-test projects as a 'drop' artifact.
 
 trigger:
   - main
@@ -12,7 +12,9 @@ pool:
 
 variables:
   buildConfiguration: 'Release'
-  publishProject: '**/ProfileSvr.Api.csproj'   # glob — change the filename to your host project's csproj
+  # Publishes every project except test projects. Once you know the host project's
+  # csproj name (see the "List projects" step output), narrow this to e.g. '**/ProfileSvr.Host.csproj'.
+  publishProject: '**/*.csproj;!**/*.Tests.csproj'
 
 steps:
   - task: UseDotNet@2
@@ -21,7 +23,7 @@ steps:
       packageType: 'sdk'
       version: '9.0.x'
 
-  # Temporary — shows every csproj path in the repo so you can confirm publishProject. Remove once it's right.
+  # Temporary — lists every csproj in the repo. Remove once publishProject is narrowed down.
   - script: dir /s /b *.csproj
     displayName: 'List projects (temporary)'
 
