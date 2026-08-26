@@ -1,5 +1,5 @@
-# ProfileSvr — .NET 9 build & test
-# Restores, builds and runs the xUnit integration + unit tests.
+# ProfileSvr — .NET 9 build, test & publish
+# Restores, builds, runs the xUnit unit + integration tests, then publishes the API as a 'drop' artifact.
 
 trigger:
   - main
@@ -12,6 +12,7 @@ pool:
 
 variables:
   buildConfiguration: 'Release'
+  publishProject: 'src/ProfileSvr.Api/ProfileSvr.Api.csproj'   # adjust to your host project
 
 steps:
   - task: UseDotNet@2
@@ -40,7 +41,18 @@ steps:
       projects: 'tests/**/*.Tests.csproj'
       arguments: '--configuration $(buildConfiguration) --no-build --logger trx'
       publishTestResults: true
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Publish'
+    inputs:
+      command: 'publish'
+      publishWebProjects: false
+      projects: '$(publishProject)'
+      arguments: '--configuration $(buildConfiguration) --no-build --output $(Build.ArtifactStagingDirectory)'
+      zipAfterPublish: true
+
   - task: PublishBuildArtifacts@1
+    displayName: 'Publish artifact'
     inputs:
       PathtoPublish: '$(Build.ArtifactStagingDirectory)'
       ArtifactName: 'drop'
