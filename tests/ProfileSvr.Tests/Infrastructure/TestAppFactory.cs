@@ -7,6 +7,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ProfileSvr.Common.MessageCentre;
@@ -28,15 +29,27 @@ public class TestAppFactory : WebApplicationFactory<Program>
 
     public TestAppFactory()
     {
+        // Config via env vars so the app starts without needing appsettings.json at the content root
+        // (see CreateHost — the content root is forced to the test bin dir, which has no appsettings).
         Environment.SetEnvironmentVariable("PROFILESVR_DB",
             "Server=unused;Database=unused;User=unused;Password=unused");
+        Environment.SetEnvironmentVariable("Sso__BaseUrl", "https://sso.test");
         _connection = new SqliteConnection("DataSource=:memory:");
         _connection.Open();
+    }
+
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        // The MvcTesting manifest bakes the build-time source path as the content root; on a machine
+        // where that path is absent the PhysicalFileProvider throws. Force a root that always exists.
+        builder.UseContentRoot(AppContext.BaseDirectory);
+        return base.CreateHost(builder);
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Production");
+        builder.UseContentRoot(AppContext.BaseDirectory);
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<DbContextOptions<AppDbContext>>();
