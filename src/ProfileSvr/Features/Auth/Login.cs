@@ -1,6 +1,7 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using ProfileSvr.Common;
+using ProfileSvr.Common.Accounts;
 using ProfileSvr.Common.Sso;
 using ProfileSvr.Database;
 using ProfileSvr.Domain;
@@ -19,6 +20,9 @@ public static class Login
     /// New — this login linked the device to the profile for the first time;
     /// Existing — the device was already the profile's active device;
     /// Unlinked — no profile resolved, so no binding is involved.
+    /// Accounts and Rates come from the core-banking provider (as in vliquidity): missing
+    /// accounts for a verified profile are re-provisioned here, and provider failures
+    /// degrade to empty lists rather than failing the login.
     /// </summary>
     private record Response(
         string AccessToken,
@@ -28,7 +32,9 @@ public static class Login
         int ExpiresIn,
         string DeviceStatus,
         string Type,
-        ProfileDto? Profile);
+        ProfileDto? Profile,
+        IReadOnlyList<AccountDetail>? Accounts,
+        IReadOnlyList<CurrencyRate>? Rates);
 
     public class Validator : AbstractValidator<Request>
     {
@@ -52,6 +58,7 @@ public static class Login
         Request request,
         AppDbContext db,
         ISsoClient sso,
+        IAccountFacade accountFacade,
         IValidator<Request> validator,
         CancellationToken ct)
     {
@@ -90,6 +97,8 @@ public static class Login
         var profile = await db.Profiles.FirstOrDefaultAsync(p => p.EmailAddress == username, ct);
 
         ProfileDto? profileDto = null;
+        IReadOnlyList<AccountDetail>? accounts = null;
+        IReadOnlyList<CurrencyRate>? rates = null;
         var deviceStatus = "Unlinked";
         if (profile is not null)
         {
@@ -106,11 +115,17 @@ public static class Login
             deviceStatus = isNewBinding ? "New" : "Existing";
 
             ActivityLog.Record(db, ActivityType.LoggedIn, profile.Id, device.Id, "Signed in.");
+            await db.SaveChangesAsync(ct);
+
+            // Retry any missing account provisioning, then load accounts + rates (best-effort).
+            (accounts, rates) = await AccountSession.LoadAsync(db, accountFacade, profile, ct);
 
             profileDto = ProfileDtoMapper.Build(profile, binding.DeviceId, binding.LinkedAtUtc);
         }
-
-        await db.SaveChangesAsync(ct);
+        else
+        {
+            await db.SaveChangesAsync(ct);
+        }
 
         return ApiResults.Ok(new Response(
             tokens.AccessToken,
@@ -120,7 +135,9 @@ public static class Login
             tokens.ExpiresIn,
             deviceStatus,
             TokenTypes.ForProfile(profile),
-            profileDto),
+            profileDto,
+            accounts,
+            rates),
             "Login successful.");
     }
 }

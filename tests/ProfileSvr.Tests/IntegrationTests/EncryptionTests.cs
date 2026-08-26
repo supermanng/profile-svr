@@ -29,6 +29,18 @@ public class EncryptionTests(TestAppFactory factory) : IClassFixture<TestAppFact
     }
 
     [Fact]
+    public async Task CreditWebhook_IsExempt_AcceptsPlaintext()
+    {
+        var client = CreateEncryptedClient();
+        // Provider webhooks arrive unencrypted; the path is exempt from payload encryption.
+        var response = await client.PostAsJsonAsync("/webhook/virtual-account-credit",
+            new { amount = 1m, status = "SUCCESSFUL" }); // malformed → acknowledged, not rejected as plaintext
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var raw = await response.Content.ReadAsStringAsync();
+        Assert.Contains("ignored", raw); // readable plaintext response, not an encrypted envelope
+    }
+
+    [Fact]
     public async Task PlaintextRequest_IsRejected()
     {
         var client = CreateEncryptedClient();

@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ProfileSvr.Database;
 
@@ -11,9 +12,11 @@ using ProfileSvr.Database;
 namespace ProfileSvr.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260826084506_AddKycStatusAndBankAccounts")]
+    partial class AddKycStatusAndBankAccounts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -368,16 +371,6 @@ namespace ProfileSvr.Migrations
                         .HasColumnType("datetime(6)")
                         .HasColumnName("updated_at_utc");
 
-                    b.Property<string>("VirtualAccount")
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("virtual_account");
-
-                    b.Property<string>("VirtualAccountBank")
-                        .HasMaxLength(150)
-                        .HasColumnType("varchar(150)")
-                        .HasColumnName("virtual_account_bank");
-
                     b.HasKey("Id");
 
                     b.HasIndex("DeviceId");
@@ -421,150 +414,6 @@ namespace ProfileSvr.Migrations
                     b.HasIndex("ProfileId", "ReleasedAtUtc");
 
                     b.ToTable("user_devices", (string)null);
-                });
-
-            modelBuilder.Entity("ProfileSvr.Domain.VirtualAccountCredit", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("char(36)")
-                        .HasColumnName("id");
-
-                    b.Property<decimal>("Amount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)")
-                        .HasColumnName("amount");
-
-                    b.Property<int>("Attempts")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasDefaultValue(0)
-                        .HasColumnName("attempts");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<bool>("CreditPosted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("tinyint(1)")
-                        .HasDefaultValue(false)
-                        .HasColumnName("credit_posted");
-
-                    b.Property<string>("LastError")
-                        .HasMaxLength(1000)
-                        .HasColumnType("varchar(1000)")
-                        .HasColumnName("last_error");
-
-                    b.Property<string>("Narration")
-                        .HasMaxLength(255)
-                        .HasColumnType("varchar(255)")
-                        .HasColumnName("narration");
-
-                    b.Property<bool>("PostingAbandoned")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("tinyint(1)")
-                        .HasDefaultValue(false)
-                        .HasColumnName("posting_abandoned");
-
-                    b.Property<string>("PostingResponse")
-                        .HasMaxLength(1000)
-                        .HasColumnType("varchar(1000)")
-                        .HasColumnName("posting_response");
-
-                    b.Property<string>("SenderName")
-                        .HasMaxLength(150)
-                        .HasColumnType("varchar(150)")
-                        .HasColumnName("sender_name");
-
-                    b.Property<string>("SourceAccount")
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("source_account");
-
-                    b.Property<string>("SourceBank")
-                        .HasMaxLength(150)
-                        .HasColumnType("varchar(150)")
-                        .HasColumnName("source_bank");
-
-                    b.Property<string>("Status")
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("status");
-
-                    b.Property<DateTime>("TransactionDate")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("transaction_date");
-
-                    b.Property<string>("TransactionRef")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("varchar(100)")
-                        .HasColumnName("transaction_ref");
-
-                    b.Property<string>("VirtualAccount")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("virtual_account");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TransactionDate");
-
-                    b.HasIndex("TransactionRef")
-                        .IsUnique();
-
-                    b.HasIndex("CreditPosted", "PostingAbandoned", "Status");
-
-                    b.ToTable("virtual_account_credits", (string)null);
-                });
-
-            modelBuilder.Entity("ProfileSvr.Domain.VirtualAccountMapping", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("char(36)")
-                        .HasColumnName("id");
-
-                    b.Property<string>("AccountName")
-                        .HasMaxLength(150)
-                        .HasColumnType("varchar(150)")
-                        .HasColumnName("account_name");
-
-                    b.Property<string>("Bank")
-                        .HasMaxLength(150)
-                        .HasColumnType("varchar(150)")
-                        .HasColumnName("bank");
-
-                    b.Property<string>("CbaAccount")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("cba_account");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime(6)")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<Guid>("ProfileId")
-                        .HasColumnType("char(36)")
-                        .HasColumnName("profile_id");
-
-                    b.Property<string>("VirtualAccount")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)")
-                        .HasColumnName("virtual_account");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProfileId");
-
-                    b.HasIndex("VirtualAccount")
-                        .IsUnique();
-
-                    b.ToTable("virtual_account_mappings", (string)null);
                 });
 
             modelBuilder.Entity("ProfileSvr.Domain.Activity", b =>

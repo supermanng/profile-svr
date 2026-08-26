@@ -10,18 +10,18 @@ namespace ProfileSvr.Features.OtpVerification;
 /// <summary>
 /// Single OTP verification endpoint — the section being verified is passed as an enum:
 ///   Email → confirms the email address,
-///   Phone → confirms the phone number,
-///   Kyc   → confirms the phone from the BVN/NIN record, marks the identity verified, tier 1.
-/// Flows with extra inputs/side effects (onboarding verify, pin-reset, password-reset,
-/// change-device) keep their own endpoints.
+///   Phone → confirms the phone number (whether the OTP came from initiate-phone or from
+///           initiate-kyc, which sends it to the phone on the BVN/NIN record).
+/// Identity verification itself is not OTP-based: it completes via the liveness + face-match
+/// flow at POST /api/onboarding/complete-kyc. Flows with extra inputs/side effects
+/// (onboarding verify, pin-reset, password-reset, change-device) keep their own endpoints.
 /// </summary>
 public static class VerifyOtp
 {
     public enum VerificationSection
     {
         Email,
-        Phone,
-        Kyc
+        Phone
     }
 
     public record Request(Guid DeviceId, string RetrievalCode, string Otp, VerificationSection Section);
@@ -52,7 +52,7 @@ public static class VerifyOtp
         public static void Map(IEndpointRouteBuilder app) =>
             app.MapPost("/api/otp/verify", Handle)
                 .RequireAuthorization()
-                .WithSummary("Verify an OTP for the given section (Email | Phone | Kyc)")
+                .WithSummary("Verify an OTP for the given section (Email | Phone)")
                 .WithTags("Otp");
     }
 
@@ -81,12 +81,9 @@ public static class VerifyOtp
                 "This device is not linked to the profile.");
 
         // Section → OTP purpose and the value the code hash is bound to.
-        var purpose = request.Section switch
-        {
-            VerificationSection.Email => OtpPurpose.EmailConfirmation,
-            VerificationSection.Phone => OtpPurpose.PhoneConfirmation,
-            _ => OtpPurpose.KycVerification
-        };
+        var purpose = request.Section == VerificationSection.Email
+            ? OtpPurpose.EmailConfirmation
+            : OtpPurpose.PhoneConfirmation;
 
         var boundTo = request.Section == VerificationSection.Email
             ? profile.EmailAddress
@@ -121,31 +118,6 @@ public static class VerifyOtp
                 ActivityLog.Record(db, ActivityType.PhoneVerified, profile.Id, request.DeviceId,
                     $"Phone number {profile.PhoneNumber} verified.");
                 break;
-
-            case VerificationSection.Kyc:
-                profile.PhoneNumberConfirmed = true;
-                string verifiedId;
-                if (profile.Bvn is not null && !profile.BvnIsVerified)
-                {
-                    profile.BvnIsVerified = true;
-                    verifiedId = "BVN";
-                }
-                else if (profile.Nin is not null && !profile.NinIsVerified)
-                {
-                    profile.NinIsVerified = true;
-                    verifiedId = "NIN";
-                }
-                else
-                {
-                    verifiedId = "identity";
-                }
-                if (profile.Tier < 1)
-                    profile.Tier = 1;
-                ActivityLog.Record(db, ActivityType.PhoneVerified, profile.Id, request.DeviceId,
-                    $"Phone number {profile.PhoneNumber} verified via KYC.");
-                ActivityLog.Record(db, ActivityType.KycVerified, profile.Id, request.DeviceId,
-                    $"{verifiedId} verified; profile moved to tier {profile.Tier}.");
-                break;
         }
 
         profile.UpdatedAtUtc = now;
@@ -158,10 +130,7 @@ public static class VerifyOtp
         ApiResults.Ok(new Response(
             profile.Id, section.ToString(), profile.EmailConfirmed, profile.PhoneNumberConfirmed,
             profile.BvnIsVerified, profile.NinIsVerified, profile.Tier, profile.UpdatedAtUtc),
-            section switch
-            {
-                VerificationSection.Email => "Email address verified.",
-                VerificationSection.Phone => "Phone number verified.",
-                _ => $"Identity verified. Profile upgraded to tier {profile.Tier}."
-            });
+            section == VerificationSection.Email
+                ? "Email address verified."
+                : "Phone number verified.");
 }

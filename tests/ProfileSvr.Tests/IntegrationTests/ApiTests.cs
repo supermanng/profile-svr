@@ -1,6 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using ProfileSvr.Tests.Infrastructure;
 
 namespace ProfileSvr.Tests.IntegrationTests;
@@ -292,36 +297,126 @@ public class ApiTests(TestAppFactory factory) : IClassFixture<TestAppFactory>
             expect: HttpStatusCode.TooManyRequests);
     }
 
-    // ---------- KYC path ----------
+    // ---------- KYC path (Dojah lookup + AWS liveness) ----------
+
+    /// <summary>Runs initiate-kyc, verifies the phone OTP, then complete-kyc; returns the complete-kyc data.</summary>
+    private async Task<JsonElement> CompleteKycAsync(string email, Guid deviceId, string bvn)
+    {
+        var initiate = await Post("/api/onboarding/initiate-kyc",
+            new { deviceId, bvn }, asUser: email, expect: HttpStatusCode.OK);
+        var data = initiate.GetProperty("data");
+        var sessionId = data.GetProperty("liveness").GetProperty("sessionId").GetString()!;
+
+        // The OTP went to the phone on the KYC record (the mock derives it from the BVN).
+        var kycPhone = "+234801" + bvn[^7..];
+        var retrievalCode = data.GetProperty("otp").GetProperty("retrievalCode").GetString()!;
+        var otp = factory.MessageCentre.LastCodeFor(kycPhone)!;
+        await Post("/api/otp/verify",
+            new { deviceId, retrievalCode, otp, section = "Phone" }, asUser: email,
+            expect: HttpStatusCode.OK);
+
+        var complete = await Post("/api/onboarding/complete-kyc",
+            new { deviceId, sessionId }, asUser: email, expect: HttpStatusCode.OK);
+        return complete.GetProperty("data");
+    }
+
+    /// <summary>Full onboarding to status Active via the KYC path (BVN verified, tier 1).</summary>
+    private async Task<(string Email, Guid DeviceId, Guid ProfileId, JsonElement CreateData)> OnboardKycActiveAsync(
+        string tag, string bvn)
+    {
+        var (email, deviceId, profileId) = await OnboardAsync(tag);
+        await CompleteKycAsync(email, deviceId, bvn);
+        var create = await Post("/api/onboarding/create-profile",
+            new { deviceId, firstName = "Test", lastName = "User", dateOfBirth = "1990-01-01" },
+            asUser: email, expect: HttpStatusCode.OK);
+        return (email, deviceId, profileId, create.GetProperty("data"));
+    }
 
     [Fact]
-    public async Task KycFlow_LoadsProfileFromBvn_AndVerifiesToTierOne()
+    public async Task KycFlow_ReturnsIdentityAndLivenessSession_AndVerifiesToTierOne()
     {
         var (email, deviceId, profileId) = await OnboardAsync("kyc1");
 
         var initiate = await Post("/api/onboarding/initiate-kyc",
             new { deviceId, bvn = "22233344455" }, asUser: email,
-            expect: HttpStatusCode.Accepted);
+            expect: HttpStatusCode.OK);
         var data = initiate.GetProperty("data");
         Assert.Equal("bvn", data.GetProperty("idType").GetString());
-        Assert.EndsWith("4455", data.GetProperty("maskedPhoneNumber").GetString());
-        Assert.StartsWith("*", data.GetProperty("maskedPhoneNumber").GetString());
+        Assert.Equal("Pending", data.GetProperty("kycStatus").GetString());
 
-        // Mock KYC derives the phone from the BVN; the code went to that phone.
+        // The Dojah identity details come back for the client to confirm, phone masked.
+        var identity = data.GetProperty("identity");
+        Assert.Equal("Adaeze", identity.GetProperty("firstName").GetString());
+        Assert.Equal("Okafor", identity.GetProperty("lastName").GetString());
+        Assert.StartsWith("*", identity.GetProperty("maskedPhoneNumber").GetString());
+        Assert.EndsWith("4455", identity.GetProperty("maskedPhoneNumber").GetString());
+        Assert.False(string.IsNullOrEmpty(identity.GetProperty("image").GetString()));
+
+        // Plus the AWS liveness session for the client SDK.
+        var liveness = data.GetProperty("liveness");
+        var sessionId = liveness.GetProperty("sessionId").GetString()!;
+        Assert.False(string.IsNullOrEmpty(sessionId));
+        Assert.False(string.IsNullOrEmpty(liveness.GetProperty("authToken").GetString()));
+
+        // And an OTP to the phone on the record — verifying it confirms the phone.
+        var otpInfo = data.GetProperty("otp");
+        Assert.Equal("WhatsApp", otpInfo.GetProperty("channel").GetString());
+        var retrievalCode = otpInfo.GetProperty("retrievalCode").GetString()!;
         var kycPhone = "+234801" + "22233344455"[^7..];
         var otp = factory.MessageCentre.LastCodeFor(kycPhone)!;
-        var retrievalCode = data.GetProperty("retrievalCode").GetString()!;
-
         var verify = await Post("/api/otp/verify",
-            new { deviceId, retrievalCode, otp, section = "Kyc" }, asUser: email,
+            new { deviceId, retrievalCode, otp, section = "Phone" }, asUser: email,
             expect: HttpStatusCode.OK);
-        Assert.True(verify.GetProperty("data").GetProperty("bvnIsVerified").GetBoolean());
-        Assert.Equal(1, verify.GetProperty("data").GetProperty("tier").GetInt32());
+        Assert.True(verify.GetProperty("data").GetProperty("phoneNumberConfirmed").GetBoolean());
+        Assert.False(verify.GetProperty("data").GetProperty("bvnIsVerified").GetBoolean()); // OTP alone ≠ KYC
+
+        // Completing runs the liveness check + face comparison and promotes to tier 1.
+        var complete = await Post("/api/onboarding/complete-kyc",
+            new { deviceId, sessionId }, asUser: email, expect: HttpStatusCode.OK);
+        var completed = complete.GetProperty("data");
+        Assert.True(completed.GetProperty("isLive").GetBoolean());
+        Assert.True(completed.GetProperty("faceMatch").GetBoolean());
+        Assert.True(completed.GetProperty("bvnIsVerified").GetBoolean());
+        Assert.True(completed.GetProperty("phoneNumberConfirmed").GetBoolean());
+        Assert.Equal(1, completed.GetProperty("tier").GetInt32());
+        Assert.Equal("Approved", completed.GetProperty("kycStatus").GetString());
 
         var me = await Get("/api/auth/me", asUser: email, expect: HttpStatusCode.OK);
         Assert.Equal("Adaeze", me.GetProperty("data").GetProperty("firstName").GetString());
         Assert.True(me.GetProperty("data").GetProperty("phoneNumberConfirmed").GetBoolean());
         Assert.Equal(profileId, me.GetProperty("data").GetProperty("profileId").GetGuid());
+    }
+
+    [Fact]
+    public async Task Kyc_FaceMatchAlone_DoesNotConfirmPhone_AndBlocksCreateProfile()
+    {
+        var (email, deviceId, _) = await OnboardAsync("kyc6");
+
+        var initiate = await Post("/api/onboarding/initiate-kyc",
+            new { deviceId, bvn = "22233344588" }, asUser: email, expect: HttpStatusCode.OK);
+        var data = initiate.GetProperty("data");
+        var sessionId = data.GetProperty("liveness").GetProperty("sessionId").GetString()!;
+
+        // Completing KYC without the OTP verifies the identity but not the phone.
+        var complete = await Post("/api/onboarding/complete-kyc",
+            new { deviceId, sessionId }, asUser: email, expect: HttpStatusCode.OK);
+        Assert.True(complete.GetProperty("data").GetProperty("bvnIsVerified").GetBoolean());
+        Assert.False(complete.GetProperty("data").GetProperty("phoneNumberConfirmed").GetBoolean());
+
+        // So the final step is still blocked...
+        await Post("/api/onboarding/create-profile",
+            new { deviceId, firstName = "Test", lastName = "User", dateOfBirth = "1990-01-01" },
+            asUser: email, expect: HttpStatusCode.UnprocessableEntity);
+
+        // ...until the OTP sent to the phone on the BVN record is verified.
+        var retrievalCode = data.GetProperty("otp").GetProperty("retrievalCode").GetString()!;
+        var otp = factory.MessageCentre.LastCodeFor("+234801" + "22233344588"[^7..])!;
+        await Post("/api/otp/verify",
+            new { deviceId, retrievalCode, otp, section = "Phone" }, asUser: email,
+            expect: HttpStatusCode.OK);
+        await Post("/api/onboarding/create-profile",
+            new { deviceId, firstName = "Test", lastName = "User", dateOfBirth = "1990-01-01" },
+            asUser: email, expect: HttpStatusCode.OK);
     }
 
     [Fact]
@@ -336,6 +431,464 @@ public class ApiTests(TestAppFactory factory) : IClassFixture<TestAppFactory>
         await Post("/api/onboarding/initiate-kyc",
             new { deviceId, bvn = "22233344455", nin = "12345678901" }, asUser: email,
             expect: HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Kyc_LivenessFailure_IsSoftFail_WithStatusLivenessFailed()
+    {
+        var (email, deviceId, _) = await OnboardAsync("kyc3");
+        factory.Faces.NextLivenessConfidence = 40; // below the 75 threshold
+        try
+        {
+            var data = await CompleteKycAsync(email, deviceId, "22233344466");
+            Assert.False(data.GetProperty("isLive").GetBoolean());
+            Assert.False(data.GetProperty("faceMatch").GetBoolean());
+            Assert.False(data.GetProperty("bvnIsVerified").GetBoolean());
+            Assert.Equal(0, data.GetProperty("tier").GetInt32());
+            Assert.Equal("LivenessFailed", data.GetProperty("kycStatus").GetString());
+
+            var me = await Get("/api/auth/me", asUser: email, expect: HttpStatusCode.OK);
+            Assert.Equal("LivenessFailed", me.GetProperty("data").GetProperty("kycStatus").GetString());
+        }
+        finally
+        {
+            factory.Faces.NextLivenessConfidence = 99.0;
+        }
+    }
+
+    [Fact]
+    public async Task Kyc_FaceMismatch_IsSoftFail_WithStatusFaceMismatch()
+    {
+        var (email, deviceId, _) = await OnboardAsync("kyc4");
+        factory.Faces.NextComparison = new ProfileSvr.Common.Kyc.FaceComparison(false, 12.5);
+        try
+        {
+            var data = await CompleteKycAsync(email, deviceId, "22233344477");
+            Assert.True(data.GetProperty("isLive").GetBoolean());
+            Assert.False(data.GetProperty("faceMatch").GetBoolean());
+            Assert.False(data.GetProperty("bvnIsVerified").GetBoolean());
+            Assert.Equal("FaceMismatch", data.GetProperty("kycStatus").GetString());
+        }
+        finally
+        {
+            factory.Faces.NextComparison = new ProfileSvr.Common.Kyc.FaceComparison(true, 98.5);
+        }
+    }
+
+    [Fact]
+    public async Task PhoneFirstJourney_AccountsAreGeneratedAtCompleteKyc()
+    {
+        // The app's main journey: email → phone OTP → create-profile (no accounts yet) → KYC,
+        // which verifies AND generates the accounts (the provider needs the verified BVN/NIN).
+        var (email, deviceId, profileId) = await OnboardActiveAsync("figma1");
+
+        // No accounts after create-profile — provisioning waits for KYC.
+        var me = await Get("/api/auth/me", asUser: email, expect: HttpStatusCode.OK);
+        Assert.Equal(JsonValueKind.Null, me.GetProperty("data").GetProperty("cif").ValueKind);
+        Assert.Equal(JsonValueKind.Null, me.GetProperty("data").GetProperty("nairaAccount").ValueKind);
+        Assert.Equal(0, me.GetProperty("data").GetProperty("tier").GetInt32());
+
+        // KYC: identity + liveness come back, but no OTP — the phone is already confirmed
+        // and is kept as-is.
+        var initiate = await Post("/api/onboarding/initiate-kyc",
+            new { deviceId, bvn = "22233344599" }, asUser: email, expect: HttpStatusCode.OK);
+        var data = initiate.GetProperty("data");
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("otp").ValueKind);
+        var sessionId = data.GetProperty("liveness").GetProperty("sessionId").GetString()!;
+
+        // complete-kyc verifies AND provisions: cif + NGN + CAD + virtual, with the mapping.
+        var complete = await Post("/api/onboarding/complete-kyc",
+            new { deviceId, sessionId }, asUser: email, expect: HttpStatusCode.OK);
+        var completed = complete.GetProperty("data");
+        Assert.True(completed.GetProperty("bvnIsVerified").GetBoolean());
+        Assert.True(completed.GetProperty("phoneNumberConfirmed").GetBoolean()); // kept from the phone leg
+        Assert.Equal(1, completed.GetProperty("tier").GetInt32());
+        Assert.Equal("Approved", completed.GetProperty("kycStatus").GetString());
+        Assert.False(string.IsNullOrEmpty(completed.GetProperty("cif").GetString()));
+        Assert.False(string.IsNullOrEmpty(completed.GetProperty("nairaAccount").GetString()));
+        Assert.False(string.IsNullOrEmpty(completed.GetProperty("cadAccount").GetString()));
+        var virtualAccount = completed.GetProperty("virtualAccount").GetString();
+        Assert.False(string.IsNullOrEmpty(virtualAccount));
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ProfileSvr.Database.AppDbContext>();
+        var mapping = await db.VirtualAccountMappings.SingleAsync(m => m.VirtualAccount == virtualAccount);
+        Assert.Equal(profileId, mapping.ProfileId);
+        Assert.Equal(completed.GetProperty("nairaAccount").GetString(), mapping.CbaAccount);
+    }
+
+    [Fact]
+    public async Task Kyc_CompleteWithoutInitiate_Is422()
+    {
+        var (email, deviceId, _) = await OnboardAsync("kyc5");
+        await Post("/api/onboarding/complete-kyc",
+            new { deviceId, sessionId = "session-x" }, asUser: email,
+            expect: HttpStatusCode.UnprocessableEntity);
+    }
+
+    // ---------- accounts (create-profile provisioning + login/refresh retrieval) ----------
+
+    [Fact]
+    public async Task KycFirstOrder_AccountsGeneratedAtKyc_ArePresentByCreateProfile()
+    {
+        var (_, _, profileId, create) = await OnboardKycActiveAsync("acct1", "22233344488");
+
+        Assert.Equal("Approved", create.GetProperty("kycStatus").GetString());
+        Assert.False(string.IsNullOrEmpty(create.GetProperty("cif").GetString()));
+        Assert.False(string.IsNullOrEmpty(create.GetProperty("nairaAccount").GetString()));
+        Assert.False(string.IsNullOrEmpty(create.GetProperty("cadAccount").GetString()));
+        var virtualAccount = create.GetProperty("virtualAccount").GetString();
+        Assert.False(string.IsNullOrEmpty(virtualAccount));
+        Assert.Equal("Test Microfinance Bank", create.GetProperty("virtualAccountBank").GetString());
+
+        // The virtual → naira mapping the credit job resolves was stored alongside.
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ProfileSvr.Database.AppDbContext>();
+        var mapping = await db.VirtualAccountMappings.SingleAsync(m => m.VirtualAccount == virtualAccount);
+        Assert.Equal(profileId, mapping.ProfileId);
+        Assert.Equal(create.GetProperty("nairaAccount").GetString(), mapping.CbaAccount);
+    }
+
+    [Fact]
+    public async Task Login_ReturnsAccountsAndRates_ForVerifiedProfile()
+    {
+        var (email, deviceId, _, _) = await OnboardKycActiveAsync("acct2", "22233344499");
+
+        var body = await Post("/api/auth/login",
+            new { username = email, password = FakeSsoClient.CorrectPassword, deviceId },
+            expect: HttpStatusCode.OK);
+        var data = body.GetProperty("data");
+
+        var accounts = data.GetProperty("accounts").EnumerateArray().ToList();
+        Assert.Equal(2, accounts.Count);
+        Assert.Contains(accounts, a => a.GetProperty("currency").GetString() == "NGN");
+        Assert.Contains(accounts, a => a.GetProperty("currency").GetString() == "CAD");
+        Assert.All(accounts, a => Assert.False(string.IsNullOrEmpty(a.GetProperty("accountNumber").GetString())));
+
+        var rates = data.GetProperty("rates").EnumerateArray().ToList();
+        Assert.NotEmpty(rates);
+        Assert.Contains(rates, r =>
+            r.GetProperty("sourceCode").GetString() == "CAD" && r.GetProperty("targetCode").GetString() == "NGN");
+
+        var profile = data.GetProperty("profile");
+        Assert.False(string.IsNullOrEmpty(profile.GetProperty("nairaAccount").GetString()));
+        Assert.False(string.IsNullOrEmpty(profile.GetProperty("cadAccount").GetString()));
+        Assert.Equal("Approved", profile.GetProperty("kycStatus").GetString());
+    }
+
+    [Fact]
+    public async Task Login_SelfHeals_WhenAccountProvisioningFailed()
+    {
+        // The banking provider is down while KYC completes and the profile is created:
+        // verification and activation still succeed; the failure is ProvisioningFailed.
+        factory.Accounts.FailAll = true;
+        string email;
+        Guid deviceId;
+        try
+        {
+            (email, deviceId, _, var create) = await OnboardKycActiveAsync("acct3", "22233344511");
+            Assert.Equal("ProvisioningFailed", create.GetProperty("kycStatus").GetString());
+            Assert.Equal(JsonValueKind.Null, create.GetProperty("nairaAccount").ValueKind);
+        }
+        finally
+        {
+            factory.Accounts.FailAll = false;
+        }
+
+        // The provider is back: login retries provisioning and returns the accounts.
+        var body = await Post("/api/auth/login",
+            new { username = email, password = FakeSsoClient.CorrectPassword, deviceId },
+            expect: HttpStatusCode.OK);
+        var data = body.GetProperty("data");
+
+        Assert.Equal(2, data.GetProperty("accounts").EnumerateArray().Count());
+        var profile = data.GetProperty("profile");
+        Assert.Equal("Approved", profile.GetProperty("kycStatus").GetString());
+        Assert.False(string.IsNullOrEmpty(profile.GetProperty("cif").GetString()));
+        Assert.False(string.IsNullOrEmpty(profile.GetProperty("nairaAccount").GetString()));
+        Assert.False(string.IsNullOrEmpty(profile.GetProperty("cadAccount").GetString()));
+    }
+
+    [Fact]
+    public async Task Login_ProviderDown_StillSucceeds_WithEmptyAccountsAndRates()
+    {
+        var (email, deviceId, _, _) = await OnboardKycActiveAsync("acct4", "22233344522");
+
+        factory.Accounts.FailAll = true;
+        try
+        {
+            var body = await Post("/api/auth/login",
+                new { username = email, password = FakeSsoClient.CorrectPassword, deviceId },
+                expect: HttpStatusCode.OK);
+            var data = body.GetProperty("data");
+            Assert.Equal("access-token", data.GetProperty("accessToken").GetString());
+            Assert.Empty(data.GetProperty("accounts").EnumerateArray());
+            Assert.Empty(data.GetProperty("rates").EnumerateArray());
+        }
+        finally
+        {
+            factory.Accounts.FailAll = false;
+        }
+    }
+
+    [Fact]
+    public async Task Refresh_SelfHealsAccounts_AndReturnsProfileAccountsAndRates()
+    {
+        // Provisioning fails at create-profile; the token refresh later self-heals it.
+        factory.Accounts.FailAll = true;
+        string email;
+        try
+        {
+            (email, _, _, _) = await OnboardKycActiveAsync("acct5", "22233344533");
+        }
+        finally
+        {
+            factory.Accounts.FailAll = false;
+        }
+
+        // The SSO returns a JWT whose email claim resolves the profile.
+        factory.Sso.RefreshAccessTokenOverride = UnsignedJwt(new { email });
+        try
+        {
+            var body = await Post("/api/auth/refresh",
+                new { token = "refresh-token" }, expect: HttpStatusCode.OK);
+            var data = body.GetProperty("data");
+
+            Assert.Equal("refresh-token-2", data.GetProperty("refreshToken").GetString());
+            Assert.Equal(email, data.GetProperty("profile").GetProperty("emailAddress").GetString());
+            Assert.Equal("Approved", data.GetProperty("profile").GetProperty("kycStatus").GetString());
+            Assert.Equal(2, data.GetProperty("accounts").EnumerateArray().Count());
+            Assert.NotEmpty(data.GetProperty("rates").EnumerateArray());
+        }
+        finally
+        {
+            factory.Sso.RefreshAccessTokenOverride = null;
+        }
+    }
+
+    // ---------- virtual-account credit webhook + naira crediting ----------
+
+    /// <summary>Onboards a KYC-active profile and returns its virtual + naira account numbers.</summary>
+    private async Task<(string VirtualAccount, string NairaAccount)> ProvisionedAccountsAsync(string tag, string bvn)
+    {
+        var (_, _, _, create) = await OnboardKycActiveAsync(tag, bvn);
+        return (create.GetProperty("virtualAccount").GetString()!,
+                create.GetProperty("nairaAccount").GetString()!);
+    }
+
+    private async Task<int> RunCreditProcessorAsync()
+    {
+        using var scope = factory.Services.CreateScope();
+        var processor = scope.ServiceProvider
+            .GetRequiredService<ProfileSvr.Common.Accounts.IVirtualAccountCreditProcessor>();
+        return await processor.ProcessPendingCreditsAsync(100);
+    }
+
+    private async Task<ProfileSvr.Domain.VirtualAccountCredit> GetCreditAsync(string reference)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ProfileSvr.Database.AppDbContext>();
+        return await db.VirtualAccountCredits.SingleAsync(c => c.TransactionRef == reference);
+    }
+
+    [Fact]
+    public async Task CreditWebhook_StoresCredit_AndJobPostsToNairaAccount()
+    {
+        var (virtualAccount, nairaAccount) = await ProvisionedAccountsAsync("credit1", "22233344544");
+
+        var reference = "VA-REF-credit1";
+        var body = await Post("/webhook/virtual-account-credit", new
+        {
+            transactionRef = reference,
+            amount = 10000m,
+            account = virtualAccount,
+            sourceAccount = "0123456789",
+            sourceBank = "GTBank",
+            senderName = "JOHN DOE",
+            narration = "Transfer",
+            transactionDate = DateTime.UtcNow,
+            status = "SUCCESSFUL"
+        }, expect: HttpStatusCode.OK);
+        Assert.Equal("received", body.GetProperty("data").GetProperty("status").GetString());
+
+        var settled = await RunCreditProcessorAsync();
+        Assert.True(settled >= 1);
+
+        // Posted to the CBA naira account with the vliquidity charges (1% + 0.5%).
+        var post = factory.CbaPoster.Posts.Single(p => p.Reference == reference);
+        Assert.Equal(nairaAccount, post.CbaAccount);
+        Assert.Equal(10000m, post.Amount);
+        Assert.Equal(100m, post.Charge);
+        Assert.Equal(50m, post.ProviderCharge);
+        Assert.Contains("JOHN DOE", post.Sender);
+
+        var credit = await GetCreditAsync(reference);
+        Assert.True(credit.CreditPosted);
+        Assert.False(credit.PostingAbandoned);
+    }
+
+    [Fact]
+    public async Task CreditWebhook_DuplicateDelivery_IsStoredOnce()
+    {
+        var (virtualAccount, _) = await ProvisionedAccountsAsync("credit2", "22233344555");
+
+        var payload = new
+        {
+            transactionRef = "VA-REF-credit2",
+            amount = 500m,
+            account = virtualAccount,
+            status = "SUCCESSFUL"
+        };
+        await Post("/webhook/virtual-account-credit", payload, expect: HttpStatusCode.OK);
+        await Post("/webhook/virtual-account-credit", payload, expect: HttpStatusCode.OK);
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ProfileSvr.Database.AppDbContext>();
+        Assert.Equal(1, await db.VirtualAccountCredits.CountAsync(c => c.TransactionRef == "VA-REF-credit2"));
+    }
+
+    [Fact]
+    public async Task CreditWebhook_InvalidPayload_IsAcknowledgedAndDropped()
+    {
+        var body = await Post("/webhook/virtual-account-credit",
+            new { amount = 100m, status = "SUCCESSFUL" }, // no transactionRef, no account
+            expect: HttpStatusCode.OK);
+        Assert.Equal("ignored", body.GetProperty("data").GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task CreditProcessor_UnknownVirtualAccount_RetriesThenDeadLetters()
+    {
+        var reference = "VA-REF-credit3";
+        await Post("/webhook/virtual-account-credit", new
+        {
+            transactionRef = reference,
+            amount = 700m,
+            account = "0000000000", // no mapping exists
+            status = "SUCCESSFUL"
+        }, expect: HttpStatusCode.OK);
+
+        // MaxPostAttempts defaults to 10 — the credit retries, then dead-letters.
+        for (var i = 0; i < 10; i++)
+            await RunCreditProcessorAsync();
+
+        var credit = await GetCreditAsync(reference);
+        Assert.False(credit.CreditPosted);
+        Assert.True(credit.PostingAbandoned);
+        Assert.Equal(10, credit.Attempts);
+        Assert.Contains("No CBA mapping", credit.LastError);
+
+        // A dead-lettered credit is never picked up again.
+        factory.CbaPoster.Posts.Clear();
+        await RunCreditProcessorAsync();
+        Assert.DoesNotContain(factory.CbaPoster.Posts, p => p.Reference == reference);
+    }
+
+    [Fact]
+    public async Task CreditProcessor_PermanentCbaFailure_DeadLettersImmediately()
+    {
+        var (virtualAccount, _) = await ProvisionedAccountsAsync("credit4", "22233344566");
+
+        var reference = "VA-REF-credit4";
+        await Post("/webhook/virtual-account-credit", new
+        {
+            transactionRef = reference,
+            amount = 900m,
+            account = virtualAccount,
+            status = "SUCCESSFUL"
+        }, expect: HttpStatusCode.OK);
+
+        factory.CbaPoster.NextFailure = new HttpRequestException(
+            "Bad request", null, HttpStatusCode.BadRequest);
+        try
+        {
+            await RunCreditProcessorAsync();
+        }
+        finally
+        {
+            factory.CbaPoster.NextFailure = null;
+        }
+
+        var credit = await GetCreditAsync(reference);
+        Assert.False(credit.CreditPosted);
+        Assert.True(credit.PostingAbandoned); // 4xx is permanent — no retry budget spent on it
+        Assert.Equal(1, credit.Attempts);
+    }
+
+    [Fact]
+    public async Task CreditProcessor_IgnoresNonSuccessfulStatus()
+    {
+        var (virtualAccount, _) = await ProvisionedAccountsAsync("credit5", "22233344577");
+
+        await Post("/webhook/virtual-account-credit", new
+        {
+            transactionRef = "VA-REF-credit5",
+            amount = 300m,
+            account = virtualAccount,
+            status = "PENDING"
+        }, expect: HttpStatusCode.OK);
+
+        await RunCreditProcessorAsync();
+
+        var credit = await GetCreditAsync("VA-REF-credit5");
+        Assert.False(credit.CreditPosted);
+        Assert.Equal(0, credit.Attempts);
+    }
+
+    [Fact]
+    public async Task CreditWebhook_WithConfiguredSecret_EnforcesSignature()
+    {
+        const string secret = "webhook-test-secret";
+        var client = factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("DigitVirtual:WebhookSecret", secret)).CreateClient();
+
+        var json = JsonSerializer.Serialize(new
+        {
+            transactionRef = "VA-REF-signed1",
+            amount = 100m,
+            account = "1234567890",
+            status = "SUCCESSFUL"
+        });
+
+        // Missing/wrong signature → 401.
+        using (var bad = new HttpRequestMessage(HttpMethod.Post, "/webhook/virtual-account-credit")
+               { Content = new StringContent(json, Encoding.UTF8, "application/json") })
+        {
+            bad.Headers.Add("X-Signature", "deadbeef");
+            var response = await client.SendAsync(bad);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        // Correct signature (lowercase hex HMAC-SHA256 of the exact body) → accepted.
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var signature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
+        using (var good = new HttpRequestMessage(HttpMethod.Post, "/webhook/virtual-account-credit")
+               { Content = new StringContent(json, Encoding.UTF8, "application/json") })
+        {
+            good.Headers.Add("X-Signature", signature);
+            var response = await client.SendAsync(good);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task Refresh_WithOpaqueAccessToken_ReturnsTokensWithoutProfile()
+    {
+        var body = await Post("/api/auth/refresh",
+            new { token = "refresh-token" }, expect: HttpStatusCode.OK);
+        var data = body.GetProperty("data");
+        Assert.Equal("access-token-2", data.GetProperty("accessToken").GetString());
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("profile").ValueKind);
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("accounts").ValueKind);
+    }
+
+    /// <summary>Builds an unsigned (alg none) JWT carrying the given payload claims.</summary>
+    private static string UnsignedJwt(object payload)
+    {
+        static string Encode(object value) =>
+            Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(value))
+                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        return $"{Encode(new { alg = "none", typ = "JWT" })}.{Encode(payload)}.";
     }
 
     // ---------- transaction PIN ----------

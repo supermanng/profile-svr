@@ -2,6 +2,7 @@ using System.Security.Claims;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using ProfileSvr.Common;
+using ProfileSvr.Common.Accounts;
 using ProfileSvr.Common.Sso;
 using ProfileSvr.Database;
 using ProfileSvr.Domain;
@@ -13,6 +14,8 @@ namespace ProfileSvr.Features.Onboarding;
 /// The profile is identified by the bearer token — the SSO puts the profile id in the
 /// SourceId claim (set at user creation), with the email claim as fallback.
 /// Requires both the email and the phone number to be verified.
+/// Accounts are generated at complete-kyc (the provider needs a verified BVN/NIN); this step
+/// only retries any provisioning KYC missed — as do login and token refresh.
 /// </summary>
 public static class CreateProfile
 {
@@ -30,6 +33,12 @@ public static class CreateProfile
         string? MiddleName,
         DateOnly DateOfBirth,
         string Status,
+        string KycStatus,
+        string? Cif,
+        string? NairaAccount,
+        string? CadAccount,
+        string? VirtualAccount,
+        string? VirtualAccountBank,
         DateTime? UpdatedAtUtc);
 
     public class Validator : AbstractValidator<Request>
@@ -61,6 +70,7 @@ public static class CreateProfile
         ClaimsPrincipal user,
         AppDbContext db,
         ISsoClient sso,
+        IAccountFacade accounts,
         IValidator<Request> validator,
         CancellationToken ct)
     {
@@ -110,9 +120,24 @@ public static class CreateProfile
         {
         }
 
+        // Accounts are generated at complete-kyc (the provider requires a verified BVN/NIN);
+        // this is a retry point for anything that step missed. Pre-KYC profiles no-op here
+        // and get their accounts when KYC completes.
+        if (await accounts.EnsureAccountsAsync(profile, ct))
+        {
+            ActivityLog.Record(db, ActivityType.AccountsProvisioned, profile.Id, request.DeviceId,
+                $"Banking accounts provisioned (cif: {profile.Cif ?? "-"}, " +
+                $"NGN: {profile.NairaAccount ?? "-"}, CAD: {profile.CadAccount ?? "-"}, " +
+                $"virtual: {profile.VirtualAccount ?? "-"}).");
+            profile.UpdatedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+        }
+
         return ApiResults.Ok(new Response(
             profile.Id, profile.FirstName, profile.LastName, profile.MiddleName,
-            request.DateOfBirth, profile.Status.ToString(), profile.UpdatedAtUtc),
+            request.DateOfBirth, profile.Status.ToString(), profile.KycStatus.ToString(),
+            profile.Cif, profile.NairaAccount, profile.CadAccount,
+            profile.VirtualAccount, profile.VirtualAccountBank, profile.UpdatedAtUtc),
             "Profile created successfully.");
     }
 

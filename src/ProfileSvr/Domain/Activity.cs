@@ -15,7 +15,8 @@ public enum ActivityType
     PinChanged,
     PinReset,
     DeviceChanged,
-    KycVerified
+    KycVerified,
+    AccountsProvisioned
 }
 
 /// <summary>Audit trail of every significant action on a profile.</summary>

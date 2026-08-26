@@ -10,22 +10,41 @@ using ProfileSvr.Domain;
 namespace ProfileSvr.Features.Onboarding;
 
 /// <summary>
-/// KYC onboarding path: after the email is verified (profile exists, user logged in),
-/// the user submits their BVN or NIN. The profile details are loaded from the KYC record,
-/// the phone number comes from the BVN/NIN — never from the client — and the OTP is sent
-/// to that phone over WhatsApp. Verify with POST /api/otp/verify (section Kyc).
+/// KYC initiation (Dojah lookup + AWS face liveness, as in vliquidity), valid in two orders:
+///   • the app's main journey — phone verified, profile created, THEN KYC: the profile keeps
+///     its already-confirmed phone, no OTP is sent, and only the identity remains to prove
+///     via liveness (complete at POST /api/onboarding/complete-kyc), or
+///   • during onboarding (before the phone leg): the phone is taken from the BVN/NIN record —
+///     never from the client — and an OTP is sent to it (WhatsApp/SMS per config), verified
+///     via POST /api/otp/verify (section Phone).
+/// Either way the identity record (names, DOB, photo) is returned so the client can confirm
+/// it, the profile is pre-filled from it, and a liveness session is opened for the client SDK.
 /// </summary>
 public static class InitiateKyc
 {
     public record Request(Guid DeviceId, string? Bvn, string? Nin);
 
+    private record IdentityDto(
+        string FirstName,
+        string LastName,
+        string? MiddleName,
+        DateOnly? DateOfBirth,
+        string? Gender,
+        string MaskedPhoneNumber,
+        string? Image);
+
+    private record LivenessDto(string SessionId, string AuthToken);
+
+    private record OtpDto(string Channel, string RetrievalCode, DateTime ExpiresAtUtc);
+
+    // Otp is null when the phone was already confirmed (KYC after profile creation).
     private record Response(
         Guid ProfileId,
         string IdType,
-        string MaskedPhoneNumber,
-        string Channel,
-        string RetrievalCode,
-        DateTime ExpiresAtUtc);
+        string KycStatus,
+        IdentityDto Identity,
+        LivenessDto Liveness,
+        OtpDto? Otp);
 
     public class Validator : AbstractValidator<Request>
     {
@@ -46,8 +65,9 @@ public static class InitiateKyc
     {
         public static void Map(IEndpointRouteBuilder app) =>
             app.MapPost("/api/onboarding/initiate-kyc", Handle)
-                .RequireAuthorization(TokenTypes.OnboardingPolicy)
-                .WithSummary("Load profile details from BVN/NIN and send an OTP to the phone number on the KYC record")
+                // Callable during onboarding AND after the profile is active (phone-first journey).
+                .RequireAuthorization()
+                .WithSummary("Load identity details from BVN/NIN, open an AWS face-liveness session (and send an OTP to the record's phone when the phone is not yet confirmed)")
                 .WithTags("Onboarding");
     }
 
@@ -56,6 +76,7 @@ public static class InitiateKyc
         ClaimsPrincipal user,
         AppDbContext db,
         IKycClient kyc,
+        IFaceVerificationService faces,
         IMessageCentre messageCentre,
         IValidator<Request> validator,
         CancellationToken ct)
@@ -90,6 +111,14 @@ public static class InitiateKyc
         if (!usingBvn && profile.NinIsVerified)
             return ApiResults.Conflict("A NIN is already verified on this profile.");
 
+        // The same BVN/NIN may not be used by two profiles.
+        var idTaken = usingBvn
+            ? await db.Profiles.AnyAsync(p => p.Id != profile.Id && p.Bvn == idNumber, ct)
+            : await db.Profiles.AnyAsync(p => p.Id != profile.Id && p.Nin == idNumber, ct);
+        if (idTaken)
+            return ApiResults.Conflict(
+                $"This {idType.ToUpperInvariant()} is already used by another profile.");
+
         // Look up the identity on the KYC service.
         KycDetails? details;
         try
@@ -112,50 +141,95 @@ public static class InitiateKyc
             return ApiResults.Fail(StatusCodes.Status422UnprocessableEntity,
                 $"No record found for this {idType.ToUpperInvariant()}.");
 
+        // With the phone already confirmed (KYC after profile creation — the app's main
+        // journey), the verified phone is kept and no OTP is needed; during onboarding the
+        // phone is adopted from the identity record and proven by an OTP sent to it.
         var phone = details.PhoneNumber;
-        var phoneTaken = await db.Profiles.AnyAsync(p => p.Id != profile.Id && p.PhoneNumber == phone, ct);
-        if (phoneTaken)
-            return ApiResults.Conflict("The phone number on this identity record is already used by another profile.");
+        var adoptKycPhone = !profile.PhoneNumberConfirmed;
+        if (adoptKycPhone)
+        {
+            var phoneTaken = await db.Profiles.AnyAsync(p => p.Id != profile.Id && p.PhoneNumber == phone, ct);
+            if (phoneTaken)
+                return ApiResults.Conflict("The phone number on this identity record is already used by another profile.");
+        }
 
-        // Load the profile from the KYC record; the phone comes from the identity, unconfirmed
-        // until the OTP sent to it is verified.
+        // Open the liveness session before persisting anything, so a failure leaves no state.
+        LivenessSession liveness;
+        try
+        {
+            liveness = await faces.CreateLivenessSessionAsync(ct);
+        }
+        catch (FaceVerificationException)
+        {
+            return ApiResults.Fail(StatusCodes.Status503ServiceUnavailable,
+                "Could not start the liveness check. Try again later.");
+        }
+
+        // Load the profile from the KYC record.
         profile.FirstName = details.FirstName;
         profile.LastName = details.LastName;
         profile.MiddleName = details.MiddleName;
         profile.DateOfBirth = details.DateOfBirth ?? profile.DateOfBirth;
-        profile.Gender = details.Gender;
-        profile.Address = details.Address;
-        profile.PhoneNumber = phone;
-        profile.PhoneNumberConfirmed = false;
+        profile.Gender = details.Gender ?? profile.Gender;
+        profile.Address = details.Address ?? profile.Address;
+        if (adoptKycPhone)
+        {
+            profile.PhoneNumber = phone;
+            profile.PhoneNumberConfirmed = false;
+        }
         if (usingBvn) { profile.Bvn = idNumber; profile.BvnIsVerified = false; }
         else { profile.Nin = idNumber; profile.NinIsVerified = false; }
+        profile.KycStatus = KycVerificationStatus.Pending;
+        profile.KycStatusReason = null;
         profile.UpdatedAtUtc = DateTime.UtcNow;
 
-        var (issued, error) = await OtpFlow.IssueEmailAsync(db, profile, OtpPurpose.KycVerification, request.DeviceId, ct);
-        if (error is not null)
-            return error;
-
-        // The OTP targets the phone from the KYC record, not the email.
-        issued!.Otp.Channel = messageCentre.PhoneOtpChannel;
-        issued.Otp.Target = phone;
-        issued.Otp.CodeHash = Otp.Hash(issued.PlainCode, OtpPurpose.KycVerification, phone);
-        await db.SaveChangesAsync(ct);
-
-        try
+        OtpDto? otpInfo = null;
+        if (adoptKycPhone)
         {
-            await messageCentre.SendPhoneOtpAsync(phone, issued.PlainCode, ct);
-        }
-        catch (HttpRequestException ex)
-        {
-            issued.Otp.ConsumedAtUtc = DateTime.UtcNow;
+            // The OTP targets the phone from the KYC record, not the email; verifying it
+            // (section Phone) is what confirms the phone. Standard cooldown/supersede rules.
+            var (issued, error) = await OtpFlow.IssueEmailAsync(
+                db, profile, OtpPurpose.PhoneConfirmation, request.DeviceId, ct);
+            if (error is not null)
+                return error;
+
+            issued!.Otp.Channel = messageCentre.PhoneOtpChannel;
+            issued.Otp.Target = phone;
+            issued.Otp.CodeHash = Otp.Hash(issued.PlainCode, OtpPurpose.PhoneConfirmation, phone);
             await db.SaveChangesAsync(ct);
-            return ApiResults.Fail(StatusCodes.Status502BadGateway,
-                $"Could not send the OTP via WhatsApp. {ex.Message}");
+
+            try
+            {
+                await messageCentre.SendPhoneOtpAsync(phone, issued.PlainCode, ct);
+            }
+            catch (HttpRequestException ex)
+            {
+                issued.Otp.ConsumedAtUtc = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+                return ApiResults.Fail(StatusCodes.Status502BadGateway,
+                    $"Could not send the OTP to the phone on the {idType.ToUpperInvariant()} record. {ex.Message}");
+            }
+
+            otpInfo = new OtpDto(issued.Otp.Channel.ToString(), issued.Otp.RetrievalCode, issued.Otp.ExpiresAtUtc);
+        }
+        else
+        {
+            await db.SaveChangesAsync(ct);
         }
 
-        return ApiResults.Accepted(new Response(
-            profile.Id, idType, Mask(phone), "whatsapp", issued.Otp.RetrievalCode, issued.Otp.ExpiresAtUtc),
-            $"OTP sent to the phone number on your {idType.ToUpperInvariant()} record.");
+        return ApiResults.Ok(new Response(
+                profile.Id,
+                idType,
+                profile.KycStatus.ToString(),
+                new IdentityDto(
+                    details.FirstName, details.LastName, details.MiddleName,
+                    details.DateOfBirth, details.Gender, Mask(phone), details.Image),
+                new LivenessDto(liveness.SessionId, liveness.AuthToken),
+                otpInfo),
+            otpInfo is null
+                ? $"Confirm the {idType.ToUpperInvariant()} details and complete the liveness check."
+                : $"Confirm the {idType.ToUpperInvariant()} details, verify the OTP sent to the phone on the record, " +
+                  "and complete the liveness check.");
     }
 
     private static string Mask(string phone) =>

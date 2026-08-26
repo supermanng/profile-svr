@@ -8,7 +8,9 @@ public record KycDetails(
     DateOnly? DateOfBirth,
     string? Gender,
     string PhoneNumber,
-    string? Address);
+    string? Address,
+    // Base64 photo on the identity record — compared against the liveness selfie.
+    string? Image);
 
 public interface IKycClient
 {

@@ -10,6 +10,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
     public DbSet<UserDevice> UserDevices => Set<UserDevice>();
     public DbSet<Activity> Activities => Set<Activity>();
+    public DbSet<VirtualAccountMapping> VirtualAccountMappings => Set<VirtualAccountMapping>();
+    public DbSet<VirtualAccountCredit> VirtualAccountCredits => Set<VirtualAccountCredit>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -115,6 +117,32 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.Property(p => p.NinIsVerified)
                 .HasColumnName("nin_is_verified")
                 .HasDefaultValue(false);
+
+            entity.Property(p => p.KycStatus)
+                .HasColumnName("kyc_status")
+                .HasConversion<string>()
+                .HasMaxLength(40)
+                .HasDefaultValue(KycVerificationStatus.NotStarted);
+
+            entity.Property(p => p.KycStatusReason)
+                .HasColumnName("kyc_status_reason")
+                .HasMaxLength(500);
+
+            entity.Property(p => p.NairaAccount)
+                .HasColumnName("naira_account")
+                .HasMaxLength(50);
+
+            entity.Property(p => p.CadAccount)
+                .HasColumnName("cad_account")
+                .HasMaxLength(50);
+
+            entity.Property(p => p.VirtualAccount)
+                .HasColumnName("virtual_account")
+                .HasMaxLength(50);
+
+            entity.Property(p => p.VirtualAccountBank)
+                .HasColumnName("virtual_account_bank")
+                .HasMaxLength(150);
 
             entity.HasIndex(p => p.EmailAddress).IsUnique();
             entity.HasIndex(p => p.PhoneNumber).IsUnique();
@@ -282,6 +310,117 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(ud => ud.DeviceId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<VirtualAccountMapping>(entity =>
+        {
+            entity.ToTable("virtual_account_mappings");
+
+            entity.HasKey(m => m.Id);
+
+            entity.Property(m => m.Id)
+                .HasColumnName("id");
+
+            entity.Property(m => m.ProfileId)
+                .HasColumnName("profile_id");
+
+            entity.Property(m => m.VirtualAccount)
+                .HasColumnName("virtual_account")
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(m => m.CbaAccount)
+                .HasColumnName("cba_account")
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(m => m.AccountName)
+                .HasColumnName("account_name")
+                .HasMaxLength(150);
+
+            entity.Property(m => m.Bank)
+                .HasColumnName("bank")
+                .HasMaxLength(150);
+
+            entity.Property(m => m.CreatedAtUtc)
+                .HasColumnName("created_at_utc");
+
+            entity.HasIndex(m => m.VirtualAccount).IsUnique();
+            entity.HasIndex(m => m.ProfileId);
+        });
+
+        modelBuilder.Entity<VirtualAccountCredit>(entity =>
+        {
+            entity.ToTable("virtual_account_credits");
+
+            entity.HasKey(c => c.Id);
+
+            entity.Property(c => c.Id)
+                .HasColumnName("id");
+
+            entity.Property(c => c.TransactionRef)
+                .HasColumnName("transaction_ref")
+                .HasMaxLength(100)
+                .IsRequired();
+
+            entity.Property(c => c.VirtualAccount)
+                .HasColumnName("virtual_account")
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(c => c.Amount)
+                .HasColumnName("amount")
+                .HasPrecision(18, 2);
+
+            entity.Property(c => c.SourceAccount)
+                .HasColumnName("source_account")
+                .HasMaxLength(50);
+
+            entity.Property(c => c.SourceBank)
+                .HasColumnName("source_bank")
+                .HasMaxLength(150);
+
+            entity.Property(c => c.SenderName)
+                .HasColumnName("sender_name")
+                .HasMaxLength(150);
+
+            entity.Property(c => c.Narration)
+                .HasColumnName("narration")
+                .HasMaxLength(255);
+
+            entity.Property(c => c.TransactionDate)
+                .HasColumnName("transaction_date");
+
+            entity.Property(c => c.Status)
+                .HasColumnName("status")
+                .HasMaxLength(50);
+
+            entity.Property(c => c.CreditPosted)
+                .HasColumnName("credit_posted")
+                .HasDefaultValue(false);
+
+            entity.Property(c => c.PostingResponse)
+                .HasColumnName("posting_response")
+                .HasMaxLength(1000);
+
+            entity.Property(c => c.Attempts)
+                .HasColumnName("attempts")
+                .HasDefaultValue(0);
+
+            entity.Property(c => c.PostingAbandoned)
+                .HasColumnName("posting_abandoned")
+                .HasDefaultValue(false);
+
+            entity.Property(c => c.LastError)
+                .HasColumnName("last_error")
+                .HasMaxLength(1000);
+
+            entity.Property(c => c.CreatedAtUtc)
+                .HasColumnName("created_at_utc");
+
+            entity.HasIndex(c => c.TransactionRef).IsUnique();
+            entity.HasIndex(c => new { c.CreditPosted, c.PostingAbandoned, c.Status });
+            entity.HasIndex(c => c.TransactionDate);
         });
 
         modelBuilder.Entity<Activity>(entity =>

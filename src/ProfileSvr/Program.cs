@@ -1,10 +1,12 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using ProfileSvr.Common;
+using ProfileSvr.Common.Accounts;
 using ProfileSvr.Common.Kyc;
 using ProfileSvr.Common.MessageCentre;
 using ProfileSvr.Common.Sso;
 using ProfileSvr.Database;
+using Refit;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -82,23 +84,103 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddScoped<Microsoft.AspNetCore.Authentication.IClaimsTransformation, ProfileTypeClaimsTransformation>();
 
-// KYC provider: real HTTP client when configured, deterministic mock for local dev.
+// KYC provider (Dojah gateway): Refit client when configured, deterministic mock for local dev.
 var kycBaseUrl = builder.Configuration["Kyc:BaseUrl"];
 if (!string.IsNullOrWhiteSpace(kycBaseUrl))
 {
-    builder.Services.AddHttpClient<IKycClient, KycHttpClient>(client =>
-    {
-        client.BaseAddress = new Uri(kycBaseUrl);
-        client.Timeout = TimeSpan.FromSeconds(15);
-        var apiKey = builder.Configuration["Kyc:ApiKey"];
-        if (!string.IsNullOrWhiteSpace(apiKey))
-            client.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
-    });
+    builder.Services.AddRefitClient<IKycApi>()
+        .ConfigureHttpClient(client =>
+        {
+            client.BaseAddress = new Uri(kycBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(30);
+            var apiKey = builder.Configuration["Kyc:ApiKey"];
+            if (!string.IsNullOrWhiteSpace(apiKey))
+                client.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
+        });
+    builder.Services.AddTransient<IKycClient, KycHttpClient>();
 }
 else
 {
     builder.Services.AddSingleton<IKycClient, MockKycClient>();
 }
+
+// Face verification (AWS Rekognition liveness + compare): real when AWS keys are configured.
+// The permissive mock is used when the keys are missing OR Aws:UseMockFaceVerification is
+// true (appsettings, or env var Aws__UseMockFaceVerification) — handy for API testing
+// without the mobile liveness SDK. Never enable the mock in a real environment.
+var useMockFaceVerification =
+    builder.Configuration.GetValue("Aws:UseMockFaceVerification", false) ||
+    string.IsNullOrWhiteSpace(builder.Configuration["Aws:AccessKey"]);
+if (useMockFaceVerification)
+    builder.Services.AddSingleton<IFaceVerificationService, MockFaceVerificationService>();
+else
+    builder.Services.AddSingleton<IFaceVerificationService, AwsFaceVerificationService>();
+
+// Core-banking accounts (NGN + CAD): OneCore Refit provider when configured, deterministic mock
+// for local dev. Endpoints only see IAccountFacade — swap IAccountProvider to change banks.
+var oneCoreBaseUrl = builder.Configuration["OneCore:BaseUrl"];
+if (!string.IsNullOrWhiteSpace(oneCoreBaseUrl))
+{
+    builder.Services.AddRefitClient<IOneCoreTokenApi>()
+        .ConfigureHttpClient(client =>
+        {
+            client.BaseAddress = new Uri(builder.Configuration["OneCore:SsoBaseUrl"]
+                ?? throw new InvalidOperationException("OneCore:SsoBaseUrl is not configured."));
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+    builder.Services.AddSingleton<OneCoreTokenCache>();
+    builder.Services.AddTransient<OneCoreAuthHandler>();
+    builder.Services.AddRefitClient<IOneCoreApi>()
+        .ConfigureHttpClient(client =>
+        {
+            client.BaseAddress = new Uri(oneCoreBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(30);
+        })
+        .AddHttpMessageHandler<OneCoreAuthHandler>();
+    builder.Services.AddTransient<IAccountProvider, OneCoreAccountProvider>();
+}
+else
+{
+    builder.Services.AddSingleton<IAccountProvider, MockAccountProvider>();
+}
+builder.Services.AddScoped<IAccountFacade, AccountFacade>();
+
+// Virtual (collection) accounts: VantPay Refit provider when configured, deterministic mock
+// for local dev. Its bearer token comes from the VantPay SSO, not the OneCore one.
+var digitVirtualBaseUrl = builder.Configuration["DigitVirtual:BaseUrl"];
+if (!string.IsNullOrWhiteSpace(digitVirtualBaseUrl))
+{
+    builder.Services.AddRefitClient<ISsoTokenApi>()
+        .ConfigureHttpClient(client =>
+        {
+            client.BaseAddress = new Uri(builder.Configuration["DigitVirtual:SsoBaseUrl"]
+                ?? throw new InvalidOperationException("DigitVirtual:SsoBaseUrl is not configured."));
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+    builder.Services.AddSingleton<VirtualAccountTokenCache>();
+    builder.Services.AddTransient<VirtualAccountAuthHandler>();
+    builder.Services.AddRefitClient<IVirtualAccountApi>()
+        .ConfigureHttpClient(client =>
+        {
+            client.BaseAddress = new Uri(digitVirtualBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(30);
+        })
+        .AddHttpMessageHandler<VirtualAccountAuthHandler>();
+    builder.Services.AddTransient<IVirtualAccountProvider, VantPayVirtualAccountProvider>();
+}
+else
+{
+    builder.Services.AddSingleton<IVirtualAccountProvider, MockVirtualAccountProvider>();
+}
+
+// Incoming virtual-account credits: stored by the webhook, settled into the CBA naira
+// account by the background job (VirtualAccountCredit:Enabled=false turns the job off).
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<ICbaCreditPoster, CbaCreditPoster>();
+builder.Services.AddScoped<IVirtualAccountCreditProcessor, VirtualAccountCreditProcessor>();
+builder.Services.AddSingleton<ProfileSvr.Jobs.JobHeartbeat>();
+if (builder.Configuration.GetValue("VirtualAccountCredit:Enabled", true))
+    builder.Services.AddHostedService<ProfileSvr.Jobs.PostCbaCreditsJob>();
 
 builder.Services.AddHttpContextAccessor();
 
@@ -125,6 +207,11 @@ builder.Services.AddProblemDetails();
 
 var app = builder.Build();
 
+if (useMockFaceVerification)
+    app.Logger.LogWarning(
+        "[DEV ONLY] Face verification is MOCKED (Aws:UseMockFaceVerification / missing AWS keys) — " +
+        "every liveness session and face comparison passes.");
+
 ActivityLog.HttpContextAccessor = app.Services.GetRequiredService<IHttpContextAccessor>();
 
 // Outermost so every API request/response (including error envelopes) is encrypted when enabled.
@@ -149,7 +236,7 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
         ? bad.StatusCode
         : StatusCodes.Status500InternalServerError;
     context.Response.StatusCode = status;
-    await context.Response.WriteAsJsonAsync(new ApiResponse<object>(
+    await context.Response.WriteAsJsonAsync(new ProfileSvr.Common.ApiResponse<object>(
         false, null,
         status == StatusCodes.Status400BadRequest
             ? "The request body is malformed."
@@ -158,7 +245,7 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
 app.UseStatusCodePages(async statusContext =>
 {
     var response = statusContext.HttpContext.Response;
-    await response.WriteAsJsonAsync(new ApiResponse<object>(
+    await response.WriteAsJsonAsync(new ProfileSvr.Common.ApiResponse<object>(
         false, null,
         Microsoft.AspNetCore.WebUtilities.ReasonPhrases.GetReasonPhrase(response.StatusCode)));
 });
@@ -172,8 +259,25 @@ app.UseSwaggerUI(options =>
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/health", () => ApiResults.Ok(new { status = "healthy" }))
-    .WithTags("Health");
+app.MapGet("/health", (ProfileSvr.Jobs.JobHeartbeat heartbeat, IConfiguration config) =>
+{
+    // The credit-posting job's heartbeat degrades health when the job stalls.
+    var jobEnabled = config.GetValue("VirtualAccountCredit:Enabled", true);
+    var intervalSeconds = config.GetValue("VirtualAccountCredit:IntervalSeconds", 2);
+    var jobHealthy = !jobEnabled || heartbeat.IsHealthy(intervalSeconds);
+    return ApiResults.Ok(new
+    {
+        status = jobHealthy ? "healthy" : "degraded",
+        creditJob = new
+        {
+            name = heartbeat.JobName,
+            enabled = jobEnabled,
+            lastTickUtc = heartbeat.LastTickUtc,
+            ticks = heartbeat.TickCount,
+            healthy = jobHealthy
+        }
+    });
+}).WithTags("Health");
 
 app.MapEndpoints();
 

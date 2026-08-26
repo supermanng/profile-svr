@@ -32,6 +32,18 @@ public class Profile
     public string? Nin { get; set; }
     public bool BvnIsVerified { get; set; }
     public bool NinIsVerified { get; set; }
+    /// <summary>Latest identity-verification outcome.</summary>
+    public KycVerificationStatus KycStatus { get; set; }
+    /// <summary>Human-readable reason for the current KYC status, when applicable.</summary>
+    public string? KycStatusReason { get; set; }
+    /// <summary>NGN account number at the core-banking provider.</summary>
+    public string? NairaAccount { get; set; }
+    /// <summary>CAD account number at the core-banking provider.</summary>
+    public string? CadAccount { get; set; }
+    /// <summary>Virtual (collection) account number at the virtual-account provider.</summary>
+    public string? VirtualAccount { get; set; }
+    /// <summary>Bank name the virtual account is domiciled at.</summary>
+    public string? VirtualAccountBank { get; set; }
     /// <summary>The device used to create this profile.</summary>
     public Guid? DeviceId { get; set; }
     public Device? Device { get; set; }

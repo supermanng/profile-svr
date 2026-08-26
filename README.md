@@ -30,10 +30,11 @@ src/ProfileSvr/
 │   │   ├── InitiateOnboarding.cs  # POST   /api/onboarding/initiate       (email + device → checks + email OTP)
 │   │   ├── VerifyAuth.cs          # POST   /api/onboarding/verify-auth    (OTP → SSO auth created; profile pending)
 │   │   ├── InitiatePhoneOtp.cs    # POST   /api/onboarding/initiate-phone   (set phone + WhatsApp OTP)
-│   │   ├── CreateProfile.cs       # POST   /api/onboarding/create-profile (names + DOB → profile Active)
-│   │   └── InitiateKyc.cs         # POST   /api/onboarding/initiate-kyc 🔒 (BVN/NIN → profile loaded, OTP to KYC phone)
+│   │   ├── CreateProfile.cs       # POST   /api/onboarding/create-profile (names + DOB → profile Active + NGN/CAD accounts)
+│   │   ├── InitiateKyc.cs         # POST   /api/onboarding/initiate-kyc 🔒 (BVN/NIN → Dojah details + phone OTP + AWS liveness session)
+│   │   └── CompleteKyc.cs         # POST   /api/onboarding/complete-kyc 🔒 (liveness + face match → verified, tier 1)
 │   ├── Otp/
-│   │   └── VerifyOtp.cs           # POST   /api/otp/verify 🔒 (one endpoint; section enum: Email | Phone | Kyc)
+│   │   └── VerifyOtp.cs           # POST   /api/otp/verify 🔒 (one endpoint; section enum: Email | Phone)
 │   ├── Profiles/                  # One file per vertical slice
 │   │   ├── GetProfile.cs          # GET    /api/profiles/{id}
 │   │   ├── ListProfiles.cs        # GET    /api/profiles?page=&pageSize=
@@ -46,8 +47,12 @@ src/ProfileSvr/
 │   │   ├── SetPhoneNumber.cs      # PUT    /api/profiles/{id}/phone
 │   │   ├── RequestEmailOtp.cs     # POST   /api/profiles/{id}/request-email-otp   (OTP via email)
 │   │   └── RequestPhoneOtp.cs     # POST   /api/profiles/{id}/request-phone-otp   (OTP via WhatsApp)
+│   ├── Webhooks/
+│   │   └── VirtualAccountCreditWebhook.cs # POST /webhook/virtual-account-credit (store credit; job posts it to the CBA)
 │   └── Devices/
 │       └── GetDevice.cs           # GET    /api/devices/{id}  (registration happens only inside OTP-gated flows)
+├── Jobs/
+│   └── PostCbaCreditsJob.cs       # background sweep: pending virtual-account credits → CBA naira account
 └── Migrations/                    # EF Core migrations (create profiles + devices tables)
 
 tests/ProfileSvr.Tests/
@@ -64,10 +69,15 @@ dotnet test
 
 The integration suite boots the whole service with an in-memory SQLite database, a fake SSO,
 a fake Message Centre that captures OTP codes (so tests can read them like a user reads email),
-and a header-driven test auth scheme. Covered: full email onboarding, cooldowns, wrong-OTP and
-lockout, login (tokens + profile DTO, wrong password, unknown/foreign device), /me, the phone leg
-via the unified /api/otp/verify, the KYC path to tier 1, PIN set/change/reset with guards,
-password change/reset, device change with binding history, and the activity feed.
+controllable face-verification and account-provider fakes, and a header-driven test auth scheme.
+Covered: full email onboarding, cooldowns, wrong-OTP and lockout, login (tokens + profile DTO +
+accounts + rates, wrong password, unknown/foreign device), /me, the phone leg via the unified
+/api/otp/verify, the KYC path (Dojah details + liveness + face match) to tier 1 with liveness/
+face-mismatch soft failures, account provisioning at create-profile (NGN + CAD + virtual account
+with its naira mapping) with the login/refresh self-heal, the credit webhook (storage, dedup,
+signature enforcement, encryption exemption) and the posting job (charges, retry-to-dead-letter,
+permanent failures, non-SUCCESSFUL statuses), PIN set/change/reset with guards, password
+change/reset, device change with binding history, and the activity feed.
 
 Each slice file is self-contained: request/response contracts, validation, handler, and route mapping live together. Adding a feature means adding one file — no shared service or repository layers to touch.
 
@@ -91,10 +101,16 @@ Table `profiles` (created automatically by migration on startup):
 | `tier`                   | int           | 0 = unverified, 1 = basic KYC passed |
 | `cif`                    | varchar(64)   | nullable — core-banking customer id, assigned externally |
 | `address`                | varchar(256)  | nullable — from the KYC record |
-| `bvn`                    | varchar(11)   | nullable; masked in API responses |
-| `nin`                    | varchar(11)   | nullable; masked in API responses |
+| `bvn`                    | varchar(11)   | nullable                 |
+| `nin`                    | varchar(11)   | nullable                 |
 | `bvn_is_verified`        | tinyint(1)    | default false            |
 | `nin_is_verified`        | tinyint(1)    | default false            |
+| `kyc_status`             | varchar(40)   | `NotStarted` → `Pending` → `Approved` \| `LivenessFailed` \| `FaceMismatch` \| `ProvisioningFailed` … |
+| `kyc_status_reason`      | varchar(500)  | nullable — human-readable reason for the current status |
+| `naira_account`          | varchar(50)   | nullable — NGN account number at the core-banking provider |
+| `cad_account`            | varchar(50)   | nullable — CAD account number at the core-banking provider |
+| `virtual_account`        | varchar(50)   | nullable — virtual (collection) account number |
+| `virtual_account_bank`   | varchar(150)  | nullable — bank the virtual account is domiciled at |
 | `transaction_pin_salt`   | varchar(64)   | nullable — per-profile random salt (PBKDF2) |
 | `transaction_pin_hash`   | varchar(128)  | nullable — PBKDF2-SHA256 of the 4-digit PIN |
 | `has_set_transaction_pin`| tinyint(1)    | default false            |
@@ -152,7 +168,7 @@ Table `activities` (audit trail of every significant action; read via `GET /api/
 | `id`             | char(36) PK  | GUID                                                                  |
 | `profile_id`     | char(36)     | FK → `profiles.id`                                                    |
 | `device_id`      | char(36)     | nullable — device the action was performed from                       |
-| `type`           | varchar(32)  | `ProfileCreated`, `EmailVerified`, `PhoneNumberSet`, `PhoneVerified`, `ProfileCompleted`, `LoggedIn`, `PasswordChanged`, `PasswordReset`, `PinSet`, `PinChanged`, `PinReset`, `DeviceChanged` |
+| `type`           | varchar(32)  | `ProfileCreated`, `EmailVerified`, `PhoneNumberSet`, `PhoneVerified`, `ProfileCompleted`, `LoggedIn`, `PasswordChanged`, `PasswordReset`, `PinSet`, `PinChanged`, `PinReset`, `DeviceChanged`, `KycVerified`, `AccountsProvisioned` |
 | `description`    | varchar(256) | human-readable summary                                                |
 | `ip_address`     | varchar(45)  | nullable — client IP (first X-Forwarded-For entry when proxied)       |
 | `created_at_utc` | datetime(6)  | indexed with profile_id                                               |
@@ -236,12 +252,14 @@ Profiles are created through onboarding, not directly:
    resolved from the device's active binding (an unlinked device → 422). Stores the phone number on the
    profile (unconfirmed, uniqueness-checked) and sends an OTP over **WhatsApp**. No/invalid token → 401.
 5. **`POST /api/otp/verify`** `{deviceId, retrievalCode, otp, section: "Phone"}` 🔒 — the single OTP
-   verification endpoint; `section` (`Email` | `Phone` | `Kyc`) selects what gets confirmed.
+   verification endpoint; `section` (`Email` | `Phone`) selects what gets confirmed.
 6. **`POST /api/onboarding/create-profile`** `{deviceId, firstName, lastName, middleName?, dateOfBirth}` 🔒 —
    the final step: creates the profile proper (personal details + `status: Active`). Identified **from
    the bearer token** (SourceId claim, email fallback); `deviceId` must match the active binding (403),
-   and both `emailConfirmed` and `phoneNumberConfirmed` must be true (422). Flow:
-   **CreateAuth (initiate) → VerifyAuth → InitiatePhone → VerifyPhone → CreateProfile.**
+   and both `emailConfirmed` and `phoneNumberConfirmed` must be true (422). Accounts are
+   generated at **complete-kyc** (the provider requires a verified BVN/NIN); this step only
+   retries any provisioning KYC missed — as do login and token refresh.
+   Flow: **CreateAuth (initiate) → VerifyAuth → InitiatePhone → VerifyPhone → CreateProfile.**
 7. **Recovery** — an account existing on the SSO but missing here (interrupted verify-auth, or a user
    from another system) cannot re-initiate (409). Instead: log in with the existing password, then
    **POST /api/onboarding/initiate-resume** 🔒 sends an email OTP approving the device, and
@@ -261,30 +279,153 @@ After onboarding, clients sign in through the service, which fronts the SSO's OA
   (unknown → 422); the sign-in is stamped on the device. The response carries `accessToken`, `refreshToken`,
   `idToken`, `tokenType`, `expiresIn`, a `deviceStatus` (`New` — linked at this login ·
   `Existing` — already the active device · `Unlinked` — no profile resolved), plus a **`profile` DTO** (when the username is the
-  profile's email): identity (names, gender, dateOfBirth, tier, cif, address, masked bvn/nin), statuses
-  (`emailConfirmed`, `phoneNumberConfirmed`, `bvnIsVerified`, `ninIsVerified`, `hasSetTransactionPin`,
-  `profileCompleted`), and device state (`activeDeviceId`, `deviceChangedAtUtc`, `deviceRecentlyChanged`).
+  profile's email): identity (names, gender, dateOfBirth, tier, cif, nairaAccount, cadAccount, kycStatus,
+  address, bvn/nin), statuses (`emailConfirmed`, `phoneNumberConfirmed`, `bvnIsVerified`,
+  `ninIsVerified`, `hasSetTransactionPin`, `profileCompleted`), and device state (`activeDeviceId`,
+  `deviceChangedAtUtc`, `deviceRecentlyChanged`) — and, as in vliquidity, the **`accounts`** list
+  (number, name, currency, live balance from the core-banking provider) and the current **`rates`**.
+  Missing accounts for a KYC-verified profile are re-provisioned during login (self-heal); provider
+  outages degrade to empty `accounts`/`rates` — login itself never fails because of the bank.
   Bad credentials → 401.
-- **`POST /api/auth/refresh`** `{token}` — exchanges a refresh token for fresh tokens. Invalid/expired → 401.
+- **`POST /api/auth/refresh`** `{token}` — exchanges a refresh token for fresh tokens. The response also
+  carries `profile`, `accounts` and `rates` (resolved from the new access token's claims) and runs the
+  same account self-heal as login, so a failed provisioning repairs itself on the next refresh.
+  Invalid/expired → 401.
 
-## KYC onboarding path (alternative to steps 4–6)
+## KYC (Dojah + AWS liveness)
 
-After the email is verified and the user is logged in, they can onboard via BVN/NIN instead of
-entering details manually:
+Identity verification is the same Dojah + AWS Rekognition flow vliquidity uses (no Sumsub), and
+runs in either of two orders:
+
+- **Phone-first journey (the app's main one)**: phone verified → create-profile (tier 0, no
+  accounts yet) → KYC. The profile keeps its already-confirmed phone and **no OTP is sent**
+  (`otp: null` in the initiate response); complete-kyc verifies the identity (tier 1,
+  `kycStatus: Approved`) **and generates the accounts**.
+- **Onboarding order (before the phone leg)**: the phone is adopted from the BVN/NIN record and
+  proven by the OTP below; the accounts are generated at complete-kyc here too, so they already
+  exist by create-profile.
 
 1. **`POST /api/onboarding/initiate-kyc`** `{deviceId, bvn | nin}` 🔒 — looks the identity up on the
-   KYC service, loads the profile (names, date of birth, gender, address) from the record, takes the
-   **phone number from the BVN/NIN — never from the client** — and sends the OTP to that phone over
-   WhatsApp. The response reveals only a masked phone number.
-2. **`POST /api/otp/verify`** `{deviceId, retrievalCode, otp, section: "Kyc"}` 🔒 — confirms the phone,
-   marks the submitted BVN/NIN verified, and moves the profile to **tier 1**.
+   Dojah KYC gateway and returns the record (`identity`: names, date of birth, gender, masked phone,
+   base64 `image`) so the client can confirm "is this you?". The profile is pre-filled from the
+   record and an **AWS face-liveness session** is opened — `liveness.sessionId` +
+   `liveness.authToken` (base64-packed temporary STS credentials) drive the mobile liveness SDK.
+   When the phone is **not yet confirmed**, it is adopted from the record — the **phone number
+   comes from the BVN/NIN, never from the client** — and an **OTP is sent to it** (WhatsApp, SMS
+   switchable by config; `otp.retrievalCode` in the response, standard 60s cooldown/supersede
+   rules); an already-confirmed phone is kept and `otp` is `null`. `kycStatus` moves to `Pending`.
+   Duplicate BVN/NIN or identity phone already on another profile → 409; unknown number → 422.
+2. **`POST /api/otp/verify`** `{deviceId, retrievalCode, otp, section: "Phone"}` 🔒 — proves
+   possession of the phone on the identity record and sets `phoneNumberConfirmed`.
+3. **`POST /api/onboarding/complete-kyc`** `{deviceId, sessionId}` 🔒 — fetches the liveness result
+   (live at confidence ≥ 75), re-fetches the identity photo and compares it with the liveness selfie
+   (match at similarity ≥ 80). On success it **marks the submitted BVN/NIN verified, sets
+   `kycStatus: Approved`, promotes the profile to tier 1 and then generates the accounts**
+   (customer/CIF + NGN + CAD + virtual + naira mapping — the provider requires a verified
+   BVN/NIN, so this is the creation point, as in vliquidity). Failed steps leave
+   `kycStatus: ProvisioningFailed` and are retried at create-profile and login/refresh.
+   In the onboarding order, steps 2 and 3 can run in either order; both must be done before
+   create-profile (which needs the confirmed phone).
+   A failed liveness check or face mismatch is a **soft failure**: HTTP 200 with
+   `isLive`/`faceMatch` false and `kycStatus` `LivenessFailed`/`FaceMismatch` — the client inspects
+   the payload and retries with a fresh initiate-kyc session.
 
-Configure the provider via `Kyc:BaseUrl` (+ optional `Kyc:ApiKey`, sent as `X-Api-Key`); expected
-contract is `GET {BaseUrl}/api/kyc/bvn/{bvn}` / `GET {BaseUrl}/api/kyc/nin/{nin}` returning
-`{isSuccess, data: {firstName, lastName, middleName, dateOfBirth, gender, phoneNumber, address}}` —
-adjust [KycHttpClient](src/ProfileSvr/Common/Kyc/KycHttpClient.cs) if the real provider differs.
+Configure the lookup via `Kyc:BaseUrl` (+ optional `Kyc:ApiKey`, sent as `X-Api-Key`); the contract
+is the vliquidity gateway one — `POST {BaseUrl}/kyc/verify` `{idNumber, idType}` (0 = BVN, 1 = NIN)
+returning `{message, data: {idNumber, idType, firstName, lastName, otherName, phoneNumber, image,
+dateOfBirth}}` — adjust [KycHttpClient](src/ProfileSvr/Common/Kyc/KycHttpClient.cs) if the provider
+differs. Face verification needs `Aws:AccessKey`, `Aws:SecretKey`, `Aws:Region` (Rekognition
+face-liveness + CompareFaces + STS session tokens).
 **When `Kyc:BaseUrl` is unset, a mock provider** returns deterministic fake identities (numbers
-ending `00` simulate not-found) so the flow is testable locally.
+ending `00` simulate not-found); **when `Aws:AccessKey` is unset — or `Aws:UseMockFaceVerification`
+is `true` (appsettings, or env var `Aws__UseMockFaceVerification`) — a mock face verifier** passes
+every liveness session and comparison, so complete-kyc is testable from Postman without the mobile
+liveness SDK. The service logs a `[DEV ONLY] Face verification is MOCKED` warning at startup when
+active — **never leave it enabled in a real environment.**
+
+## Accounts (core banking — plug and play)
+
+Every **KYC-verified** profile gets a banking **customer (CIF)**, an **NGN (Naira) account**, a
+**CAD (Canadian dollar) account** and a **virtual (collection) account**, created at
+**complete-kyc** right after the identity is verified (the provider requires a BVN/NIN — same
+point vliquidity provisions at); create-profile, login and token refresh retry anything that
+step missed. All external integrations are **Refit** clients, and the whole thing sits behind
+a **facade** so this service stays portable across projects:
+
+- [`IAccountFacade`](src/ProfileSvr/Common/Accounts/AccountFacade.cs) — what endpoints call:
+  `EnsureAccountsAsync` (get-or-create customer + NGN + CAD + virtual account, best-effort,
+  reflects the outcome in `kycStatus`, and stores the virtual → naira mapping the credit job
+  uses), `GetAccountsAsync` (live balances), `GetRatesAsync` (latest rate per currency pair).
+- [`IAccountProvider`](src/ProfileSvr/Common/Accounts/IAccountProvider.cs) — the replaceable
+  core-banking seam. Default: **OneCore** over the Refit
+  [`IOneCoreApi`](src/ProfileSvr/Common/Accounts/OneCoreApi.cs) (the same endpoints vliquidity
+  uses: `/api/v1/customers`, `/api/v1/customer-accounts`, `/api/v1/currencies/rates`;
+  bearer-token client credentials against the OneCore SSO, cached until expiry).
+- [`IVirtualAccountProvider`](src/ProfileSvr/Common/Accounts/VirtualAccounts.cs) — the replaceable
+  collections seam. Default: **VantPay** over the Refit `IVirtualAccountApi`
+  (`POST /api/v1/virtual-accounts/create/static`; bearer token from the VantPay SSO).
+
+To move to another bank or collections provider, implement the seam and swap the registration in
+`Program.cs` — endpoints and facade stay untouched. Unset `BaseUrl`s fall back to deterministic
+mock providers for local dev.
+
+Failure handling mirrors vliquidity: each provisioning step swallows and logs its failure; a
+verified-but-unprovisioned profile carries `kycStatus: ProvisioningFailed` and is **retried
+automatically at every login and token refresh** (and repaired back to `Approved` once complete).
+Account/rate retrieval failures degrade to empty lists — login and refresh never fail because the
+bank is down.
+
+```json
+"OneCore": {
+  "BaseUrl": "",                    // unset → deterministic mock provider (local dev)
+  "SsoBaseUrl": "https://sso-dev.digitvanttechnology.com",
+  "ClientId": "", "ClientSecret": "",
+  "OfficeId": "IK001",
+  "AccountOfficerId": "…",
+  "NairaProductId": "100",          // OneCore product code for NGN accounts
+  "CadProductId": "",               // OneCore product code for CAD accounts
+  "WebhookUrl": "…/api/v1/integrations/webhook",  // CBA credit-posting endpoint
+  "TransferIntegrationKey": "", "TransferIntegrationSecret": "",  // X-Integration-Key + HMAC secret
+  "VirtualAccountCreditNarration": "Transfer Received"
+},
+"DigitVirtual": {
+  "BaseUrl": "",                    // unset → deterministic mock provider (local dev)
+  "SsoBaseUrl": "https://sso-app-dev.digitvant.com",
+  "ClientId": "", "ClientSecret": "",
+  "BankName": "Digitvant Microfinance Bank Ltd",
+  "WebhookSecret": ""               // unset → inbound webhook signature check skipped (dev)
+}
+```
+
+## Virtual-account credits (webhook → naira crediting)
+
+Incoming transfers to a profile's virtual account are settled into its CBA naira account exactly
+the way vliquidity does it:
+
+1. **`POST /webhook/virtual-account-credit`** — the collections provider notifies a credit:
+   `{transactionRef, amount, account, sourceAccount?, sourceBank?, senderName?, narration?,
+   transactionDate?, status}` (field names case-insensitive). The credit is stored in
+   `virtual_account_credits`, **idempotent on `transactionRef`** (redeliveries and races on the
+   unique index are acknowledged as duplicates). Malformed notifications are acknowledged with
+   `status: "ignored"` (redelivery can't fix them); a storage failure returns 500 so the provider
+   redelivers. When `DigitVirtual:WebhookSecret` is set, the `X-Signature` header must carry
+   lowercase-hex HMAC-SHA256 of the raw body (401 otherwise). The path is exempt from payload
+   encryption.
+2. **[`PostCbaCreditsJob`](src/ProfileSvr/Jobs/PostCbaCreditsJob.cs)** ticks every
+   `VirtualAccountCredit:IntervalSeconds` (2s): picks unposted, unabandoned `SUCCESSFUL` credits
+   oldest-first (batch `BatchSize`), resolves the **`virtual_account_mappings`** row to the naira
+   account, computes the vliquidity charges (`ChargePercent` 1% + `ProviderChargePercent` 0.5%),
+   and posts via [`CbaCreditPoster`](src/ProfileSvr/Common/Accounts/CbaCreditPoster.cs) to the
+   **OneCore integrations webhook**: `X-Integration-Key` + `X-Signature` (lowercase-hex
+   HMAC-SHA256 of the exact body with `OneCore:TransferIntegrationSecret`) and body
+   `{reference, accountNumber, amount, charge, providerCharge, narration}`. A CBA "duplicate /
+   already posted" reply (409 or matching body) is treated as settled.
+3. **Retry / dead-letter**: transient failures retry every tick until
+   `VirtualAccountCredit:MaxPostAttempts` (10) is spent; permanent errors (4xx except 408/429)
+   dead-letter immediately. `attempts`, `last_error` and `posting_abandoned` are kept on the row
+   for review. A MySQL advisory lock (`GET_LOCK`) keeps multiple replicas from double-posting.
+4. **Health**: the job beats a heartbeat surfaced on `GET /health` (`status: "degraded"` when the
+   job stalls). Set `VirtualAccountCredit:Enabled: false` to turn the job off (tests do).
 
 ## Payload encryption
 

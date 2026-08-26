@@ -8,14 +8,15 @@ namespace ProfileSvr.Common;
 ///   requests with a JSON body must arrive as {"data": "base64(nonce||ciphertext||tag)"} —
 ///   the middleware decrypts it and hands the plaintext JSON to the endpoint;
 ///   responses are captured and re-wrapped in the same envelope.
-/// Exempt paths (docs, health) stay in plaintext so tooling keeps working.
+/// Exempt paths (docs, health, provider webhooks) stay in plaintext so tooling and
+/// external callers keep working.
 /// </summary>
 public class PayloadEncryptionMiddleware(
     RequestDelegate next,
     IConfiguration configuration,
     ILogger<PayloadEncryptionMiddleware> logger)
 {
-    private static readonly string[] ExemptPrefixes = ["/swagger", "/openapi", "/health"];
+    private static readonly string[] ExemptPrefixes = ["/swagger", "/openapi", "/health", "/webhook"];
 
     private readonly bool _enabled = configuration.GetValue<bool>("Encryption:Enabled");
     private readonly byte[]? _key = configuration.GetValue<bool>("Encryption:Enabled")

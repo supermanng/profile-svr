@@ -17,6 +17,12 @@ public record ProfileDto(
     DateOnly? DateOfBirth,
     int Tier,
     string? Cif,
+    string? NairaAccount,
+    string? CadAccount,
+    string? VirtualAccount,
+    string? VirtualAccountBank,
+    string KycStatus,
+    string? KycStatusReason,
     string? Address,
     string? Bvn,
     string? Nin,
@@ -57,9 +63,15 @@ public static class ProfileDtoMapper
         profile.DateOfBirth,
         profile.Tier,
         profile.Cif,
+        profile.NairaAccount,
+        profile.CadAccount,
+        profile.VirtualAccount,
+        profile.VirtualAccountBank,
+        profile.KycStatus.ToString(),
+        profile.KycStatusReason,
         profile.Address,
-        Mask(profile.Bvn),
-        Mask(profile.Nin),
+        profile.Bvn,
+        profile.Nin,
         profile.EmailConfirmed,
         profile.PhoneNumberConfirmed,
         profile.BvnIsVerified,
@@ -72,9 +84,4 @@ public static class ProfileDtoMapper
         profile.DeviceChangedAtUtc,
         profile.DeviceRecentlyChanged,
         profile.CreatedAtUtc);
-
-    private static string? Mask(string? value) =>
-        value is null ? null
-        : value.Length <= 4 ? value
-        : new string('*', value.Length - 4) + value[^4..];
 }

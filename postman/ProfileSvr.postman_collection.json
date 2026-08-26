@@ -322,10 +322,10 @@
       ]
     },
     {
-      "name": "2 \u00b7 KYC path (alternative to steps 4-6)",
+      "name": "2 \u00b7 KYC path (before or after create-profile; OTP step only when the phone isn't confirmed yet)",
       "item": [
         {
-          "name": "initiate-kyc (BVN \u2192 WhatsApp OTP)",
+          "name": "initiate-kyc (BVN \u2192 Dojah details + phone OTP + liveness session)",
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/onboarding/initiate-kyc",
@@ -345,11 +345,15 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('202 + masked phone', () => {",
-                  "  pm.expect(pm.response.code).to.eql(202);",
+                  "pm.test('200 + identity + otp + liveness session', () => {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
                   "  const d = pm.response.json().data;",
-                  "  console.log('OTP sent to', d.maskedPhoneNumber);",
-                  "  pm.collectionVariables.set('retrievalCode', d.retrievalCode);",
+                  "  console.log('identity:', d.identity.firstName, d.identity.lastName, d.identity.maskedPhoneNumber);",
+                  "  console.log('OTP sent via', d.otp.channel, 'to', d.identity.maskedPhoneNumber);",
+                  "  pm.expect(d.kycStatus).to.eql('Pending');",
+                  "  pm.expect(d.liveness.sessionId).to.be.a('string');",
+                  "  pm.collectionVariables.set('livenessSessionId', d.liveness.sessionId);",
+                  "  pm.collectionVariables.set('retrievalCode', d.otp.retrievalCode);",
                   "});"
                 ]
               }
@@ -357,7 +361,7 @@
           ]
         },
         {
-          "name": "otp/verify \u00b7 section Kyc (\u2192 tier 1)",
+          "name": "otp/verify \u00b7 section Phone (confirms the KYC phone)",
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/otp/verify",
@@ -369,7 +373,37 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"section\": \"Kyc\"\n}"
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"retrievalCode\": \"{{retrievalCode}}\",\n  \"otp\": \"{{otp}}\",\n  \"section\": \"Phone\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('phone confirmed', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.phoneNumberConfirmed).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "complete-kyc (liveness + face match \u2192 tier 1)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/onboarding/complete-kyc",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"sessionId\": \"{{livenessSessionId}}\"\n}"
             }
           },
           "event": [
@@ -379,6 +413,9 @@
                 "exec": [
                   "pm.test('KYC verified, tier 1', () => {",
                   "  const d = pm.response.json().data;",
+                  "  pm.expect(d.isLive).to.eql(true);",
+                  "  pm.expect(d.faceMatch).to.eql(true);",
+                  "  pm.expect(d.kycStatus).to.eql('Approved');",
                   "  pm.expect(d.tier).to.eql(1);",
                   "});"
                 ]
@@ -882,6 +919,50 @@
             "method": "GET",
             "url": "{{baseUrl}}/api/devices/{{deviceId}}"
           }
+        }
+      ]
+    },
+    {
+      "name": "9 · Webhooks",
+      "item": [
+        {
+          "name": "virtual-account credit (provider → stored → job posts to CBA)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "url": "{{baseUrl}}/webhook/virtual-account-credit",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Signature",
+                "value": "{{webhookSignature}}",
+                "description": "lowercase-hex HMAC-SHA256 of the raw body — required only when DigitVirtual:WebhookSecret is set",
+                "disabled": true
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionRef\": \"VA-{{$timestamp}}\",\n  \"amount\": 10000,\n  \"account\": \"{{virtualAccount}}\",\n  \"sourceAccount\": \"0123456789\",\n  \"sourceBank\": \"GTBank\",\n  \"senderName\": \"JOHN DOE\",\n  \"narration\": \"Transfer\",\n  \"status\": \"SUCCESSFUL\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('credit received', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.status).to.eql('received');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

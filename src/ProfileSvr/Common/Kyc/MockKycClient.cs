@@ -6,6 +6,10 @@ namespace ProfileSvr.Common.Kyc;
 /// </summary>
 public class MockKycClient(ILogger<MockKycClient> logger) : IKycClient
 {
+    /// <summary>1x1 transparent PNG standing in for the identity photo.</summary>
+    public const string TinyPngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
     public Task<KycDetails?> LookupBvnAsync(string bvn, CancellationToken ct) => LookupAsync(bvn, "BVN");
 
     public Task<KycDetails?> LookupNinAsync(string nin, CancellationToken ct) => LookupAsync(nin, "NIN");
@@ -27,6 +31,7 @@ public class MockKycClient(ILogger<MockKycClient> logger) : IKycClient
             DateOfBirth: new DateOnly(1995, 5, 15),
             Gender: "Female",
             PhoneNumber: "+234801" + number[^7..],
-            Address: "12 Marina Road, Lagos Island, Lagos"));
+            Address: "12 Marina Road, Lagos Island, Lagos",
+            Image: TinyPngBase64));
     }
 }
