@@ -40,3 +40,8 @@ steps:
       projects: 'tests/**/*.Tests.csproj'
       arguments: '--configuration $(buildConfiguration) --no-build --logger trx'
       publishTestResults: true
+  - task: PublishBuildArtifacts@1
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+      ArtifactName: 'drop'
+      publishLocation: 'Container'
