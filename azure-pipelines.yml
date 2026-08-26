@@ -1,0 +1,65 @@
+# ProfileSvr — .NET 9 build, test & publish
+# Restores, builds, runs the xUnit unit + integration tests, then publishes all non-test projects as a 'drop' artifact.
+
+trigger:
+  - main
+
+pr:
+  - main
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  buildConfiguration: 'Release'
+
+steps:
+  - task: UseDotNet@2
+    displayName: 'Install .NET 9 SDK'
+    inputs:
+      packageType: 'sdk'
+      version: '9.0.x'
+
+  # Temporary — lists every csproj in the repo. Remove once the Publish pattern is narrowed to the host project.
+  - script: dir /s /b *.csproj
+    displayName: 'List projects (temporary)'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Restore'
+    inputs:
+      command: 'restore'
+      projects: 'ProfileSvr.sln'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Build'
+    inputs:
+      command: 'build'
+      projects: 'ProfileSvr.sln'
+      arguments: '--configuration $(buildConfiguration) --no-restore'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Test'
+    inputs:
+      command: 'test'
+      projects: 'tests/**/*.Tests.csproj'
+      arguments: '--configuration $(buildConfiguration) --no-build --logger trx'
+      publishTestResults: true
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Publish'
+    inputs:
+      command: 'publish'
+      publishWebProjects: false
+      # One pattern per line. Once you know the host project, replace both lines with e.g. **/ProfileSvr.Host.csproj
+      projects: |
+        **/*.csproj
+        !**/*.Tests.csproj
+      arguments: '--configuration $(buildConfiguration) --no-build --output $(Build.ArtifactStagingDirectory)'
+      zipAfterPublish: true
+
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish artifact'
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+      ArtifactName: 'drop'
+      publishLocation: 'Container'
