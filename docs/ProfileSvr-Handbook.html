@@ -192,14 +192,15 @@
     <p class="eyebrow">Muuvly · profile service · v1</p>
     <h1>ProfileSvr Handbook</h1>
     <p class="sub">The product requirements and the complete API reference for the profile microservice:
-    OTP-verified onboarding, device-bound identity, KYC to tier 1, transaction PIN, and credential
+    OTP-verified onboarding, device-bound identity, KYC with face liveness to tier 1, automatic banking-account
+    provisioning (NGN · CAD · virtual), virtual-account credit settlement, transaction PIN, and credential
     recovery — everything a client team or reviewer needs in one page.</p>
     <div class="factbar">
       <div class="fact">Base URL <b class="mono">http://localhost:5107</b></div>
       <div class="fact">Envelope <b class="mono">{isSuccess, data, message}</b></div>
       <div class="fact">Auth <b>Bearer JWT</b> (SSO-issued)</div>
       <div class="fact">Stack <b>.NET 9 · MySQL · vertical slices</b></div>
-      <div class="fact">Tests <b>48 passing</b></div>
+      <div class="fact">Tests <b>67 passing</b></div>
     </div>
     <nav class="toc" aria-label="Contents">
       <a href="#prd-overview">1 · Product overview<small>what this service is for</small></a>
@@ -207,13 +208,15 @@
       <a href="#prd-fr">3 · Functional requirements<small>FR-1 … FR-24</small></a>
       <a href="#prd-security">4 · Security model<small>token types · OTP discipline · device trust</small></a>
       <a href="#prd-data">5 · Data &amp; integrations<small>tables · SSO · Message Centre · KYC</small></a>
-      <a href="#prd-risks">6 · Risks &amp; metrics<small>open items · success measures</small></a>
-      <a href="#api-conventions">7 · API conventions<small>envelope · auth · encryption</small></a>
-      <a href="#api-onboarding">8 · Onboarding API<small>7 endpoints</small></a>
-      <a href="#api-otp">9 · OTP verification<small>the single verify endpoint</small></a>
-      <a href="#api-auth">10 · Auth API<small>login · tokens · password · device change</small></a>
-      <a href="#api-profiles">11 · Profile API<small>reads · PIN · audit feed</small></a>
-      <a href="#api-appendix">12 · Appendix<small>OTP purposes · status codes</small></a>
+      <a href="#prd-accounts">6 · Banking accounts<small>provisioning · credit settlement · providers</small></a>
+      <a href="#prd-risks">7 · Risks &amp; metrics<small>open items · success measures</small></a>
+      <a href="#api-conventions">8 · API conventions<small>envelope · auth · encryption</small></a>
+      <a href="#api-onboarding">9 · Onboarding API<small>8 endpoints incl. KYC liveness</small></a>
+      <a href="#api-otp">10 · OTP verification<small>the single verify endpoint</small></a>
+      <a href="#api-auth">11 · Auth API<small>login · tokens · password · device change</small></a>
+      <a href="#api-profiles">12 · Profile API<small>reads · PIN · audit feed</small></a>
+      <a href="#api-webhooks">13 · Webhooks<small>virtual-account credits in</small></a>
+      <a href="#api-appendix">14 · Appendix<small>OTP purposes · KYC statuses · status codes</small></a>
     </nav>
   </header>
 
@@ -249,11 +252,13 @@
             <td>initiate → verify-auth → initiate-phone → otp/verify · Phone → create-profile</td>
             <td><code>Active</code>, tier 0, device bound</td></tr>
         <tr><td><b>Onboard (KYC)</b></td><td>Customer has a BVN/NIN</td>
-            <td>initiate → verify-auth → initiate-kyc → otp/verify · Kyc → create-profile</td>
-            <td><code>Active</code>, <b>tier 1</b>, identity + phone verified from the BVN record</td></tr>
+            <td>initiate → verify-auth → initiate-kyc (identity lookup + liveness session) →
+                otp/verify · Phone → complete-kyc (selfie ↔ ID photo match) → create-profile</td>
+            <td><code>Active</code>, <b>tier 1</b>, identity + phone verified from the BVN/NIN record,
+                <b>NGN + CAD + virtual accounts provisioned</b></td></tr>
         <tr><td><b>Return &amp; act</b></td><td>Daily use</td>
             <td>login (or /me on relaunch) → PIN &amp; password self-service under a profile-active token</td>
-            <td>Session with full profile DTO and risk gates</td></tr>
+            <td>Session with full profile DTO, live account balances, exchange rates, and risk gates</td></tr>
         <tr><td><b>Recover</b></td><td>Lost/new phone, or interrupted signup</td>
             <td>Device switch: initiate-device-change → change-device.
                 Resume: login → initiate-resume → resume</td>
@@ -273,7 +278,7 @@
         <tr><td>FR-2</td><td>The email is proven by a 6-digit OTP before any account exists; verify-auth then creates the SSO auth and a staging record (<code>status: AuthCreated</code>) and returns onboarding-typed tokens so no separate login is needed.</td></tr>
         <tr><td>FR-3</td><td>The phone number is proven by an OTP delivered over WhatsApp (SMS switchable by config); in the KYC path the phone comes from the BVN/NIN record, never from the client.</td></tr>
         <tr><td>FR-4</td><td>The profile is only <em>created</em> (status <code>Active</code>) at the final step, after both email and phone are verified and personal details are supplied.</td></tr>
-        <tr><td>FR-5</td><td>A successful KYC verification marks the submitted BVN/NIN verified and promotes the profile to tier 1.</td></tr>
+        <tr><td>FR-5</td><td>KYC is proven biometrically: an AWS face-liveness session opens at <code>initiate-kyc</code>, and <code>complete-kyc</code> compares the liveness selfie with the BVN/NIN photo — a match marks the id verified, sets <code>kycStatus: Approved</code>, promotes to tier 1 and provisions the banking accounts. A failed liveness or mismatch is a soft failure the client retries with a new session.</td></tr>
         <tr><td>FR-6</td><td>Re-initiating before the profile exists simply resends a fresh OTP (60 s cooldown), invalidating earlier codes.</td></tr>
       </tbody>
     </table></div>
@@ -297,6 +302,18 @@
         <tr><td>FR-14</td><td>Sessions refresh without a password (<code>/auth/refresh</code>); app relaunch rehydrates from the token alone (<code>/auth/me</code>).</td></tr>
         <tr><td>FR-15</td><td>Password change requires the current password; password reset requires an email OTP; both execute on the SSO.</td></tr>
         <tr><td>FR-16</td><td>The 4-digit transaction PIN is set once, changed with the current PIN, or reset via email OTP; it is stored as PBKDF2-SHA256 with a per-profile salt and is verified during transactions, not by this API.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Banking accounts &amp; money-in</h3>
+    <div class="tablebox"><table class="fr">
+      <tbody>
+        <tr><td>FR-25</td><td>Once the identity (BVN/NIN) is verified, the service provisions the banking chain automatically: customer (CIF) → NGN account → CAD account → virtual (collection) account — each step get-or-create and best-effort, never blocking the caller.</td></tr>
+        <tr><td>FR-26</td><td>Failed provisioning surfaces as <code>kycStatus: ProvisioningFailed</code> and <b>self-heals</b>: create-profile, login and refresh each retry the missing pieces until the chain completes.</td></tr>
+        <tr><td>FR-27</td><td>The bank behind the accounts is replaceable: endpoints only see a facade, with the core-banking provider (OneCore today) and the virtual-account provider (VantPay today) swappable behind two interfaces.</td></tr>
+        <tr><td>FR-28</td><td>Login and refresh return the live account list (with balances) and the latest exchange rate per currency pair; provider outages yield empty lists, never a failed login.</td></tr>
+        <tr><td>FR-29</td><td>Incoming virtual-account credits arrive on a signed webhook, are stored idempotently by <code>transactionRef</code>, and a background job settles them into the CBA naira account — with configured platform and provider charges — retrying transient failures and dead-lettering permanent ones.</td></tr>
+        <tr><td>FR-30</td><td>The credit-posting job carries a heartbeat surfaced on <code>/health</code>; a stalled job degrades health. A MySQL advisory lock keeps multiple replicas from double-posting.</td></tr>
       </tbody>
     </table></div>
 
@@ -346,6 +363,10 @@
       <li><b>Device trust</b>: password proves the account, the mailbox OTP approves the device — stolen credentials alone cannot enroll an attacker's device.</li>
       <li><b>Payload encryption</b> (optional): AES-256-GCM, fresh nonce per message, authenticated — a flipped byte is rejected, never garbled.</li>
       <li><b>Fail closed</b>: SSO or KYC unreachable → 503 before anything persists.</li>
+      <li><b>Webhook integrity</b>: inbound credit notifications must carry <code>X-Signature</code> =
+        HMAC-SHA256 of the raw body (fixed-time compared); outbound CBA postings are signed the same way.</li>
+      <li><b>Biometric proof</b>: tier 1 requires a live selfie matched against the BVN/NIN photo —
+        a stolen id number alone cannot pass KYC.</li>
     </ul>
   </section>
 
@@ -356,7 +377,7 @@
       <thead><tr><th>Table</th><th>Holds</th><th>Key columns</th></tr></thead>
       <tbody>
         <tr><td><code>profiles</code></td><td>The customer record and every status flag</td>
-            <td>status, email/phone + confirmations, names, DOB, gender, tier, cif, address, masked BVN/NIN + verifications, PIN salt/hash, device-change gate timestamps</td></tr>
+            <td>status, email/phone + confirmations, names, DOB, gender, tier, address, masked BVN/NIN + verifications, kycStatus (+ reason), cif, naira/CAD/virtual account numbers, PIN salt/hash, device-change gate timestamps</td></tr>
         <tr><td><code>devices</code></td><td>Registered devices with hardware metadata</td>
             <td>unique deviceIdentifier, name, platform, OS, manufacturer, model, appVersion</td></tr>
         <tr><td><code>user_devices</code></td><td>Profile↔device bindings; one active per side, history kept</td>
@@ -365,6 +386,10 @@
             <td>retrieval_code (unique), purpose, target, bound hash, attempts, expiry, consumption, pre-allocated source_id</td></tr>
         <tr><td><code>activities</code></td><td>Immutable audit trail</td>
             <td>type, profile, device, ip_address, timestamp</td></tr>
+        <tr><td><code>virtual_account_mappings</code></td><td>Virtual (collection) account → CBA naira account routing</td>
+            <td>virtual_account (unique), cba_account, profile, account name/bank</td></tr>
+        <tr><td><code>virtual_account_credits</code></td><td>Every inbound credit notification, and its settlement state</td>
+            <td>transaction_ref (unique), virtual_account, amount, sender details, credit_posted, attempts, posting_abandoned, provider response</td></tr>
       </tbody>
     </table></div>
 
@@ -375,23 +400,72 @@
             <td>Pre-registration calls authenticate with a client-credentials <em>service client</em>; claim create replaces in place; SourceId claim = profile id</td></tr>
         <tr><td><b>Message Centre</b></td><td>Email (HTML template), WhatsApp, SMS</td>
             <td>Queue-based; response body's <code>isSuccessful</code> is checked; senders (<code>EmailFrom</code>, WhatsApp <code>from: 91096</code>) are required for actual delivery; phone numbers sent digits-only</td></tr>
-        <tr><td><b>KYC provider</b></td><td>BVN/NIN lookup → identity + phone</td>
+        <tr><td><b>KYC provider</b> (DigitKYC)</td><td>BVN/NIN lookup → identity, phone, photo</td>
             <td>Pluggable HTTP client behind <code>IKycClient</code>; deterministic mock in dev (numbers ending 00 = not found)</td></tr>
+        <tr><td><b>AWS Rekognition</b></td><td>Face-liveness sessions and selfie ↔ ID-photo comparison</td>
+            <td>Behind <code>IFaceVerificationService</code>; mock switchable via <code>AWS:UseMockFaceVerification</code></td></tr>
+        <tr><td><b>OneCore</b> (core banking)</td><td>Customer (CIF), NGN + CAD deposit accounts, exchange rates, credit posting</td>
+            <td>Behind <code>IAccountProvider</code>; client-credentials token against its own SSO; product codes per currency in config</td></tr>
+        <tr><td><b>VantPay</b> (DigitVirtual)</td><td>Static virtual (collection) accounts + inbound credit webhooks</td>
+            <td>Behind <code>IVirtualAccountProvider</code>; webhook signed with HMAC-SHA256 when <code>DigitVirtual:WebhookSecret</code> is set</td></tr>
       </tbody>
     </table></div>
   </section>
 
+  <section id="prd-accounts">
+    <p class="eyebrow">6 · banking accounts</p>
+    <h2>Accounts &amp; money-in</h2>
+    <p>Once KYC approves an identity, ProfileSvr turns the profile into a banked customer without any
+    further client calls — and once the customer shares their virtual account number, incoming transfers
+    settle into their naira account automatically.</p>
+
+    <h3>The provisioning chain</h3>
+    <p>Runs first at <code>complete-kyc</code> (the provider requires a verified BVN/NIN), and re-runs at
+    <code>create-profile</code>, <code>login</code> and <code>refresh</code> until complete:</p>
+    <ul class="tight">
+      <li><b>1 · Customer (CIF)</b> — searched by email on OneCore first, created only if absent (idempotent).</li>
+      <li><b>2 · NGN account</b>, then <b>3 · CAD account</b> — existing accounts in the right currency are adopted; otherwise opened with the configured product codes.</li>
+      <li><b>4 · Virtual account</b> — a static VantPay collection account tied to the BVN/NIN, opened only after the NGN account exists so every credit has somewhere to land; its routing row (<code>virtual → naira</code>) is written in the same transaction.</li>
+    </ul>
+    <p class="note">Every step is best-effort: a provider outage logs a warning, leaves
+    <code>kycStatus: ProvisioningFailed</code> ("we'll retry automatically"), and the next login or refresh
+    picks up where it stopped. The caller's request never fails because a bank was down.</p>
+
+    <h3>The money-in pipeline</h3>
+    <ul class="tight">
+      <li><b>Notify</b> — the provider calls <code>POST /webhook/virtual-account-credit</code>; the signature is verified and the credit stored, idempotent on <code>transactionRef</code> (redeliveries and races are absorbed).</li>
+      <li><b>Settle</b> — the <code>PostCbaCreditsJob</code> sweeps stored <code>SUCCESSFUL</code> credits every ~2 s (batch 1000), resolves the virtual → naira mapping, computes the platform charge (<code>ChargePercent</code>) and provider charge (<code>ProviderChargePercent</code>), and posts a signed credit to OneCore's integrations webhook.</li>
+      <li><b>Converge</b> — a CBA "duplicate reference" reply counts as settled; transient failures retry each tick up to <code>MaxPostAttempts</code>; permanent (4xx) failures dead-letter immediately with the error preserved.</li>
+      <li><b>Observe</b> — the job beats a heartbeat that <code>/health</code> reports; a stalled job flips health to <code>degraded</code>. Replicas coordinate through a MySQL advisory lock.</li>
+    </ul>
+
+    <h3>Configuration surface</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Section</th><th>Drives</th><th>Keys</th></tr></thead>
+      <tbody>
+        <tr><td><code>OneCore</code></td><td>Core banking + credit posting</td><td>BaseUrl, SsoBaseUrl, ClientId/Secret, OfficeId, AccountOfficerId, NairaProductId, CadProductId, WebhookUrl, TransferIntegrationKey/Secret, VirtualAccountCreditNarration</td></tr>
+        <tr><td><code>DigitVirtual</code></td><td>Virtual accounts + webhook auth</td><td>BaseUrl, SsoBaseUrl, ClientId/Secret, BankName, WebhookSecret</td></tr>
+        <tr><td><code>VirtualAccountCredit</code></td><td>The settlement job</td><td>Enabled, BatchSize, IntervalSeconds, MaxPostAttempts, ChargePercent, ProviderChargePercent</td></tr>
+        <tr><td><code>AWS</code></td><td>Face liveness</td><td>AccessKey, SecretKey, Region, UseMockFaceVerification</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">When OneCore / DigitVirtual base URLs are unset, deterministic mocks provision fake
+    accounts so local development runs end-to-end — never ship the mocks to production.</p>
+  </section>
+
   <section id="prd-risks">
-    <p class="eyebrow">6 · risks &amp; metrics</p>
+    <p class="eyebrow">7 · risks &amp; metrics</p>
     <h2>Open items, risks, and what success looks like</h2>
     <div class="tablebox"><table>
       <thead><tr><th>Risk / open item</th><th>Impact</th><th>Mitigation / owner</th></tr></thead>
       <tbody>
         <tr><td>WhatsApp delivery depends on the Message Centre's queue consumer and an approved business template</td><td>Phone leg blocks</td><td>SMS channel switch in config; MCS team owns template approval</td></tr>
-        <tr><td>Real KYC provider contract not yet supplied</td><td>KYC path runs on the mock</td><td>Single adapter file to swap when the spec arrives</td></tr>
+        <tr><td>OneCore / VantPay / AWS credentials unset fall back to mocks or empty results</td><td>Fake accounts in dev could be mistaken for real; empty balances after login</td><td>Fail startup in production when a required provider is unconfigured</td></tr>
+        <tr><td>An unset <code>DigitVirtual:WebhookSecret</code> skips signature verification</td><td>Forged credit notifications would be stored (though not settled without a mapping)</td><td>Make the secret mandatory outside dev</td></tr>
+        <tr><td>Charge percentages live in config with no audit of applied values per credit</td><td>Reconciliation disputes hard to settle</td><td>Persist the computed charge on each credit row</td></tr>
         <tr><td>Message Centre reports "queued", never "delivered"</td><td>Silent drops invisible</td><td>Request delivery callbacks/status from MCS team</td></tr>
         <tr><td>Payload-encryption key is a shared symmetric secret</td><td>Rotation requires an app release</td><td>Evolve to per-device ECDH negotiated at onboarding</td></tr>
-        <tr><td>Secrets currently live in appsettings.json</td><td>Leak risk if committed</td><td>Move to env vars / secret store before production</td></tr>
+        <tr><td>Secrets load from a gitignored <code>appsettings.Secrets.json</code> or env vars</td><td>Leak risk if the pattern is bypassed</td><td>Move to a managed secret store before production; rotate anything ever committed</td></tr>
         <tr><td>PIN endpoint has no attempt lockout (verification happens in the transaction service)</td><td>Depends on downstream throttling</td><td>Mirror the OTP 5-attempt rule where the PIN is verified</td></tr>
       </tbody>
     </table></div>
@@ -400,7 +474,10 @@
       <li><b>Onboarding completion</b>: initiate → Active conversion, and time-to-Active.</li>
       <li><b>OTP health</b>: delivery success per channel, verify-on-first-attempt rate, lockout rate.</li>
       <li><b>Recovery</b>: device-switch and resume completion without support contact.</li>
-      <li><b>Risk</b>: share of transactions inside the 24 h fresh-device gate; KYC tier-1 uptake.</li>
+      <li><b>Risk</b>: share of transactions inside the 24 h fresh-device gate; KYC tier-1 uptake;
+        liveness pass rate and face-match rate.</li>
+      <li><b>Money-in</b>: credit settlement latency (webhook → CBA posting), retry depth,
+        dead-letter count (target: zero).</li>
     </ul>
   </section>
 
@@ -408,7 +485,7 @@
   <div class="part" id="api"><span class="n">PART II</span><h2>API Reference</h2></div>
 
   <section id="api-conventions">
-    <p class="eyebrow">7 · conventions</p>
+    <p class="eyebrow">8 · conventions</p>
     <h2>Read this first</h2>
     <div class="card">
       <p><b>Envelope.</b> Every response, success or failure, is
@@ -434,9 +511,17 @@
     <div class="ep">
       <div class="ep-head"><span class="chip m-get">GET</span><span class="path">/health</span><span class="authb a-anon">anon</span></div>
       <div class="ep-body">
-        <p>Liveness probe; also proves the envelope shape.</p>
+        <p>Liveness probe; also proves the envelope shape. Reports the credit-posting job's heartbeat —
+        a stalled job flips <code>status</code> to <code>degraded</code>.</p>
         <div class="io"><div><h5>Response 200</h5><pre>{ "isSuccess": true,
-  "data": { "status": "healthy" },
+  "data": {
+    "status": "healthy",   // or "degraded"
+    "creditJob": {
+      "name": "cba-credit-post",
+      "enabled": true,
+      "lastTickUtc": "…",
+      "ticks": 120491,
+      "healthy": true } },
   "message": "Operation successful." }</pre></div></div>
       </div>
     </div>
@@ -444,10 +529,11 @@
 
   <!-- ---------- ONBOARDING ---------- -->
   <section id="api-onboarding">
-    <p class="eyebrow">8 · onboarding</p>
+    <p class="eyebrow">9 · onboarding</p>
     <h2>Onboarding</h2>
-    <p class="muted">The sequence: initiate → verify-auth → initiate-phone (or initiate-kyc) →
-    otp/verify → create-profile. Recovery: initiate-resume → resume.</p>
+    <p class="muted">The sequence: initiate → verify-auth → initiate-phone (or initiate-kyc →
+    otp/verify · Phone → complete-kyc) → create-profile. Recovery: initiate-resume → resume.
+    The KYC pair also works <em>after</em> the profile is active — the app's phone-first journey.</p>
 
     <div class="ep">
       <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/initiate</span><span class="authb a-anon">anon</span></div>
@@ -527,24 +613,70 @@
     </div>
 
     <div class="ep">
-      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/initiate-kyc</span><span class="authb a-onb">🔒 onboarding</span></div>
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/initiate-kyc</span><span class="authb a-any">🔒 any</span></div>
       <div class="ep-body">
-        <p>KYC alternative to the manual phone leg: submit <b>either</b> <code>bvn</code> <b>or</b>
-        <code>nin</code> (11 digits). The profile is loaded from the identity record (names, DOB, gender,
-        address) and the OTP goes to <b>the phone on the record</b> — the client never supplies it.
-        The response reveals only a masked number.</p>
+        <p>KYC start, valid before <em>or</em> after the profile is active: submit <b>either</b>
+        <code>bvn</code> <b>or</b> <code>nin</code> (11 digits). The identity record (names, DOB, gender,
+        photo) is looked up, the profile pre-filled from it, and an <b>AWS face-liveness session</b> opened
+        for the client SDK. When the phone is not yet confirmed, it is adopted from the record — never from
+        the client — and an OTP goes to it (<code>otp</code> is <code>null</code> when the phone is already
+        confirmed). The response reveals only a masked number.</p>
         <div class="io">
           <div><h5>Request</h5><pre>{ "deviceId": "GUID",
   "bvn": "22233344455",
   "nin": null }</pre></div>
-          <div><h5>Response 202</h5><pre>{ "profileId": "GUID",
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
   "idType": "bvn",
-  "maskedPhoneNumber": "**********4455",
-  "channel": "whatsapp",
-  "retrievalCode": "…", "expiresAtUtc": "…" }</pre></div>
+  "kycStatus": "Pending",
+  "identity": {
+    "firstName": "Ada", "lastName": "Obi",
+    "middleName": null,
+    "dateOfBirth": "1995-05-15", "gender": "Female",
+    "maskedPhoneNumber": "**********8634",
+    "image": "base64…" },
+  "liveness": { "sessionId": "…", "authToken": "…" },
+  "otp": {                       // null when phone already confirmed
+    "channel": "WhatsApp",
+    "retrievalCode": "…", "expiresAtUtc": "…" } }</pre></div>
         </div>
-        <p class="errs"><b>400</b> both/neither id supplied · <b>409</b> id already verified / phone in use ·
-        <b>422</b> no record for this BVN/NIN, or email not yet confirmed · <b>502/503</b> KYC provider errors</p>
+        <p class="errs"><b>400</b> both/neither id supplied · <b>403</b> device not linked · <b>409</b> id already
+        verified / id or phone used by another profile · <b>422</b> no record for this BVN/NIN, or email not
+        yet confirmed · <b>429</b> cooldown · <b>502/503</b> KYC or liveness provider errors</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/complete-kyc</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>Finish KYC after the client SDK runs the liveness session: fetches the liveness result, compares
+        the live selfie with the BVN/NIN photo, and on a match marks the id verified, sets
+        <code>kycStatus: Approved</code>, promotes to <b>tier 1</b> — and <b>provisions the banking
+        accounts</b> (CIF → NGN → CAD → virtual). A failed liveness or face mismatch is a <em>soft</em>
+        failure: HTTP 200 with <code>isLive</code>/<code>faceMatch</code> false — retry with a fresh
+        session from initiate-kyc.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "sessionId": "…" }   // from initiate-kyc</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "idType": "bvn",
+  "livenessScore": 0.98, "isLive": true,
+  "faceMatch": true, "faceMatchConfidence": 99.2,
+  "bvnIsVerified": true, "ninIsVerified": false,
+  "phoneNumberConfirmed": true,
+  "tier": 1,
+  "kycStatus": "Approved",   // or ProvisioningFailed
+  "cif": "0012345",
+  "nairaAccount": "1000012345",
+  "cadAccount": "1000012346",
+  "virtualAccount": "8812345678",
+  "virtualAccountBank": "Digitvant Microfinance Bank Ltd" }</pre></div>
+        </div>
+        <p class="errs"><b>403</b> device not linked / no profile · <b>409</b> identity already verified ·
+        <b>422</b> no BVN/NIN staged (run initiate-kyc first) · <b>502/503</b> liveness, KYC or comparison
+        provider errors</p>
+        <p class="note">Account provisioning is best-effort: on a provider outage the response shows
+        <code>kycStatus: ProvisioningFailed</code> and the missing accounts are created automatically at
+        create-profile, login or refresh.</p>
       </div>
     </div>
 
@@ -554,7 +686,7 @@
         <p>The final step — creates the profile proper. Identity comes from the token (SourceId claim,
         email fallback); the <code>deviceId</code> must match the active binding; email <em>and</em> phone
         must both be confirmed. Flips status to <code>Active</code> and the SSO type claim to
-        <code>profile-active</code>.</p>
+        <code>profile-active</code>, and retries any banking-account provisioning still missing from KYC.</p>
         <div class="io">
           <div><h5>Request</h5><pre>{ "deviceId": "GUID",
   "firstName": "Ada",
@@ -614,23 +746,23 @@
 
   <!-- ---------- OTP ---------- -->
   <section id="api-otp">
-    <p class="eyebrow">9 · otp verification</p>
+    <p class="eyebrow">10 · otp verification</p>
     <h2>The single verify endpoint</h2>
 
     <div class="ep">
       <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/otp/verify</span><span class="authb a-any">🔒 any</span></div>
       <div class="ep-body">
         <p>One endpoint verifies every plain confirmation; the <code>section</code> enum selects what gets
-        confirmed. <code>Email</code> confirms the email address; <code>Phone</code> confirms the phone;
-        <code>Kyc</code> confirms the phone from the identity record, marks the BVN/NIN verified and
-        promotes to <b>tier 1</b>. Already-verified sections return success idempotently.
-        (Flows with extra inputs — verify-auth, pin-reset, password-reset, change-device, resume — keep
-        their own endpoints.)</p>
+        confirmed. <code>Email</code> confirms the email address; <code>Phone</code> confirms the phone —
+        including the phone adopted from a BVN/NIN record during KYC (the identity itself is verified
+        biometrically at <code>complete-kyc</code>, not by an OTP). Already-verified sections return success
+        idempotently. (Flows with extra inputs — verify-auth, pin-reset, password-reset, change-device,
+        resume — keep their own endpoints.)</p>
         <div class="io">
           <div><h5>Request</h5><pre>{ "deviceId": "GUID",
   "retrievalCode": "…",
   "otp": "123456",
-  "section": "Phone"   // Email | Phone | Kyc
+  "section": "Phone"   // Email | Phone
 }</pre></div>
           <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
   "section": "Phone",
@@ -650,7 +782,7 @@
 
   <!-- ---------- AUTH ---------- -->
   <section id="api-auth">
-    <p class="eyebrow">10 · auth</p>
+    <p class="eyebrow">11 · auth</p>
     <h2>Sessions, passwords, device change</h2>
 
     <div class="ep">
@@ -658,8 +790,10 @@
       <div class="ep-body">
         <p>SSO password grant gated on the device: the <code>deviceId</code> must be registered, and if the
         profile is bound to a <em>different</em> device the login is refused — the device-change ceremony is
-        the only way to move. Returns tokens, a <code>deviceStatus</code>, the token <code>type</code>, and
-        the full profile DTO (null for SSO-only accounts mid-resume).</p>
+        the only way to move. Returns tokens, a <code>deviceStatus</code>, the token <code>type</code>, the
+        full profile DTO (null for SSO-only accounts mid-resume) — and, for a provisioned profile, the
+        <b>live account balances and latest exchange rates</b>. Any missing accounts are re-provisioned
+        first (the self-heal); provider outages yield empty lists, never a failed login.</p>
         <div class="io">
           <div><h5>Request</h5><pre>{ "username": "ada@example.com",
   "password": "S3cure-Pass!",
@@ -669,7 +803,16 @@
   "tokenType": "Bearer", "expiresIn": 3599,
   "deviceStatus": "Existing",  // New | Existing | Unlinked
   "type": "profile-active",
-  "profile": { …profile DTO, see /auth/me… } }</pre></div>
+  "profile": { …profile DTO, see /auth/me… },
+  "accounts": [
+    { "accountName": "ADA OBI", "accountNumber": "1000012345",
+      "currency": "NGN", "balance": 25000.50 },
+    { "accountName": "ADA OBI", "accountNumber": "1000012346",
+      "currency": "CAD", "balance": 120.00 } ],
+  "rates": [
+    { "sourceCode": "CAD", "targetCode": "NGN", "type": "Transfer",
+      "buyRate": 1080.0, "sellRate": 1100.0,
+      "date": "…", "updatedAtUtc": "…" } ] }</pre></div>
         </div>
         <p class="errs"><b>401</b> wrong credentials · <b>403</b> profile bound to a different device ·
         <b>422</b> unregistered deviceId · <b>503</b> SSO unreachable</p>
@@ -679,11 +822,16 @@
     <div class="ep">
       <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/auth/refresh</span><span class="authb a-anon">anon</span></div>
       <div class="ep-body">
+        <p>Exchanges the refresh token and, like login, resolves the profile from the new token, retries
+        any missing account provisioning, and returns the profile DTO with accounts and rates.</p>
         <div class="io">
           <div><h5>Request</h5><pre>{ "token": "&lt;refreshToken&gt;" }</pre></div>
           <div><h5>Response 200</h5><pre>{ "accessToken": "…", "refreshToken": "…",
   "idToken": "…", "tokenType": "Bearer",
-  "expiresIn": 3599 }</pre></div>
+  "expiresIn": 3599,
+  "type": "profile-active",
+  "profile": { …profile DTO… },
+  "accounts": [ … ], "rates": [ … ] }</pre></div>
         </div>
         <p class="errs"><b>401</b> refresh token invalid or expired</p>
       </div>
@@ -697,7 +845,12 @@
   "emailAddress": "ada@example.com", "phoneNumber": "+2348060168634",
   "firstName": "Ada", "lastName": "Obi", "middleName": null,
   "gender": "Female", "dateOfBirth": "1995-05-15",
-  "tier": 1, "cif": null, "address": "12 Marina Road, Lagos",
+  "tier": 1, "address": "12 Marina Road, Lagos",
+  "cif": "0012345",
+  "nairaAccount": "1000012345", "cadAccount": "1000012346",
+  "virtualAccount": "8812345678",
+  "virtualAccountBank": "Digitvant Microfinance Bank Ltd",
+  "kycStatus": "Approved", "kycStatusReason": null,
   "bvn": "*******4455", "nin": null,
   "emailConfirmed": true, "phoneNumberConfirmed": true,
   "bvnIsVerified": true, "ninIsVerified": false,
@@ -794,7 +947,7 @@
 
   <!-- ---------- PROFILES ---------- -->
   <section id="api-profiles">
-    <p class="eyebrow">11 · profile</p>
+    <p class="eyebrow">12 · profile</p>
     <h2>Reads, PIN, audit</h2>
 
     <div class="ep">
@@ -833,7 +986,7 @@
       <div class="ep-body">
         <p>The caller's audit feed, newest first. Types: AuthCreated, ProfileCreated, EmailVerified,
         PhoneNumberSet, PhoneVerified, ProfileCompleted, LoggedIn, PasswordChanged, PasswordReset,
-        PinSet, PinChanged, PinReset, DeviceChanged, KycVerified.</p>
+        PinSet, PinChanged, PinReset, DeviceChanged, KycVerified, AccountsProvisioned.</p>
         <div class="io"><div style="grid-column: 1 / -1"><h5>Response 200</h5><pre>{ "items": [ { "id": "GUID", "profileId": "GUID",
       "type": "DeviceChanged",
       "description": "Active device changed to 'Ada's iPhone'.",
@@ -928,9 +1081,47 @@
     </div>
   </section>
 
+  <!-- ---------- WEBHOOKS ---------- -->
+  <section id="api-webhooks">
+    <p class="eyebrow">13 · webhooks</p>
+    <h2>Money in</h2>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/webhook/virtual-account-credit</span><span class="authb a-anon">anon + HMAC</span></div>
+      <div class="ep-body">
+        <p>Called by the virtual-account provider when a customer's collection account is credited. When
+        <code>DigitVirtual:WebhookSecret</code> is configured, the <code>X-Signature</code> header must be
+        the lowercase-hex <b>HMAC-SHA256 of the raw body</b> (fixed-time compared); when unset (dev only),
+        verification is skipped. The credit is stored idempotently by <code>transactionRef</code> — the
+        <code>PostCbaCreditsJob</code> then settles it into the mapped CBA naira account, minus the
+        configured charges. A storage failure returns 500 so the provider redelivers rather than losing
+        the credit; a malformed payload is acknowledged and dropped (redelivery cannot fix it).</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "transactionRef": "VA-2026-000123",
+  "amount": 15000.00,
+  "account": "8812345678",
+  "sourceAccount": "0123456789",
+  "sourceBank": "GTBank",
+  "senderName": "CHIDI OKafor",
+  "narration": "rent",
+  "transactionDate": "…",
+  "status": "SUCCESSFUL" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "status": "received",
+  "receivedAtUtc": "…" }
+// or { "status": "ignored", … }
+//    for malformed payloads</pre></div>
+        </div>
+        <p class="errs"><b>401</b> invalid signature · <b>500</b> storage failure — provider should redeliver</p>
+        <p class="note">Only credits with <code>status: SUCCESSFUL</code> are settled. Transient posting
+        failures retry every ~2 s up to <code>MaxPostAttempts</code> (default 10); permanent 4xx rejections
+        dead-letter with the error preserved; a CBA "duplicate reference" reply counts as settled.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- ---------- APPENDIX ---------- -->
   <section id="api-appendix">
-    <p class="eyebrow">12 · appendix</p>
+    <p class="eyebrow">14 · appendix</p>
     <h2>Reference tables</h2>
 
     <h3>OTP purposes</h3>
@@ -940,11 +1131,25 @@
         <tr><td><code>Onboarding</code></td><td>email</td><td>email</td><td>verify-auth</td><td>SSO auth + staging record + tokens</td></tr>
         <tr><td><code>PhoneConfirmation</code></td><td>WhatsApp/SMS</td><td>phone</td><td>otp/verify · Phone</td><td>phone confirmed</td></tr>
         <tr><td><code>EmailConfirmation</code></td><td>email</td><td>email</td><td>otp/verify · Email</td><td>email confirmed</td></tr>
-        <tr><td><code>KycVerification</code></td><td>WhatsApp/SMS</td><td>phone from BVN/NIN</td><td>otp/verify · Kyc</td><td>ID verified · tier 1</td></tr>
+        <tr><td><code>PhoneConfirmation</code> (KYC path)</td><td>WhatsApp/SMS</td><td>phone from BVN/NIN record</td><td>otp/verify · Phone</td><td>phone confirmed (id verified separately at complete-kyc)</td></tr>
         <tr><td><code>DeviceChange</code></td><td>email</td><td>email</td><td>change-device</td><td>binding moved · gate opens</td></tr>
         <tr><td><code>DeviceRegistration</code></td><td>email</td><td>email</td><td>resume</td><td>device registered · record rebuilt</td></tr>
         <tr><td><code>PinReset</code></td><td>email</td><td>email</td><td>pin-reset</td><td>new PIN hash</td></tr>
         <tr><td><code>PasswordReset</code></td><td>email</td><td>email</td><td>password-reset</td><td>SSO password reset</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>KYC statuses</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>kycStatus</th><th>Meaning</th><th>Recoverable?</th></tr></thead>
+      <tbody>
+        <tr><td><code>NotStarted</code></td><td>No KYC attempt yet</td><td>—</td></tr>
+        <tr><td><code>Pending</code></td><td>Identity looked up, liveness session open, awaiting complete-kyc</td><td>in progress</td></tr>
+        <tr><td><code>Approved</code></td><td>Liveness + face match passed; identity verified, accounts provisioned</td><td>terminal (good)</td></tr>
+        <tr><td><code>LivenessFailed</code></td><td>The liveness check did not pass</td><td>yes — new session</td></tr>
+        <tr><td><code>FaceMismatch</code></td><td>The selfie did not match the BVN/NIN photo</td><td>yes — new session</td></tr>
+        <tr><td><code>ProvisioningFailed</code></td><td>Identity verified but account setup incomplete</td><td>auto-retried at create-profile / login / refresh</td></tr>
+        <tr><td><code>Retry</code> / <code>Rejected</code> / <code>Failed</code></td><td>Provider asked for resubmission / permanently rejected / could not complete</td><td>Retry: yes · Rejected: no · Failed: yes</td></tr>
       </tbody>
     </table></div>
 
@@ -960,13 +1165,13 @@
         <tr><td class="mono">409</td><td>Conflict: already exists / already confirmed / device in use / PIN already set</td></tr>
         <tr><td class="mono">422</td><td>Preconditions unmet: unknown device, unconfirmed phone, no KYC record, nothing to resume</td></tr>
         <tr><td class="mono">429</td><td>Resend cooldown (60 s) or OTP attempt lockout (5 tries)</td></tr>
-        <tr><td class="mono">502 / 503</td><td>A dependency (SSO, Message Centre, KYC) rejected the call or is unreachable — nothing was persisted</td></tr>
+        <tr><td class="mono">502 / 503</td><td>A dependency (SSO, Message Centre, KYC, liveness, core banking) rejected the call or is unreachable — nothing was persisted</td></tr>
       </tbody>
     </table></div>
   </section>
 
   <footer>
-    ProfileSvr Handbook · Muuvly · generated from the live codebase (48 tests passing) ·
+    ProfileSvr Handbook · Muuvly · generated from the live codebase (67 tests passing) ·
     companion diagrams in the <b>ProfileSvr Flow Atlas</b> artifact · Postman collection in
     <span class="mono">postman/ProfileSvr.postman_collection.json</span>
   </footer>
