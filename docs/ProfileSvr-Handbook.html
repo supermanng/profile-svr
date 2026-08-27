@@ -1,0 +1,1178 @@
+<title>ProfileSvr Handbook</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #f6f6fa;
+    --surface: #ffffff;
+    --surface2: #fbfbfd;
+    --ink: #21222f;
+    --muted: #5d5f78;
+    --faint: #9295ad;
+    --line: #e2e3ee;
+    --accent: #4f46e5;
+    --accent-ink: #ffffff;
+    --accent-soft: #eef0ff;
+    --get: #0e7a63;   --get-soft: #e3f3ef;
+    --post: #4f46e5;  --post-soft: #eef0ff;
+    --put: #b45309;   --put-soft: #fdf1e3;
+    --danger: #b42318;
+    --ok: #0e7a63;
+    --code-bg: #f2f2f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131420; --surface: #1c1e2d; --surface2: #191b28;
+      --ink: #e9eaf4; --muted: #a2a4bf; --faint: #6f7290;
+      --line: #2c2e44;
+      --accent: #949cff; --accent-ink: #14152a; --accent-soft: #272b4d;
+      --get: #5cc4a9; --get-soft: #17352f;
+      --post: #949cff; --post-soft: #272b4d;
+      --put: #e0a35e; --put-soft: #3a2c18;
+      --danger: #ef8f83; --ok: #5cc4a9;
+      --code-bg: #171927;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131420; --surface: #1c1e2d; --surface2: #191b28;
+    --ink: #e9eaf4; --muted: #a2a4bf; --faint: #6f7290;
+    --line: #2c2e44;
+    --accent: #949cff; --accent-ink: #14152a; --accent-soft: #272b4d;
+    --get: #5cc4a9; --get-soft: #17352f;
+    --post: #949cff; --post-soft: #272b4d;
+    --put: #e0a35e; --put-soft: #3a2c18;
+    --danger: #ef8f83; --ok: #5cc4a9;
+    --code-bg: #171927;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Public Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.6;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 52px 24px 100px; }
+
+  h1, h2, h3, h4 { font-family: "Archivo", system-ui, sans-serif; line-height: 1.2; text-wrap: balance; margin: 0; }
+  h1 { font-size: 38px; font-weight: 800; letter-spacing: -0.02em; }
+  h2 { font-size: 24px; font-weight: 700; margin: 0 0 12px; }
+  h3 { font-size: 17px; font-weight: 650; margin: 26px 0 8px; }
+  p { max-width: 72ch; margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 10px;
+  }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.87em; }
+  code { background: var(--accent-soft); border-radius: 4px; padding: 1px 5px; }
+
+  /* ---------- header ---------- */
+  .hero { padding-bottom: 34px; border-bottom: 1px solid var(--line); }
+  .hero .sub { color: var(--muted); max-width: 76ch; margin-top: 12px; font-size: 16px; }
+  .factbar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+  .fact {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 14px; font-size: 12.5px; color: var(--muted);
+  }
+  .fact b { color: var(--ink); font-weight: 600; }
+  .fact .mono { font-size: 11.5px; }
+
+  /* ---------- part dividers & toc ---------- */
+  .part {
+    margin: 64px 0 34px; display: flex; align-items: baseline; gap: 16px;
+    border-bottom: 3px solid var(--accent); padding-bottom: 10px;
+  }
+  .part .n {
+    font-family: "Archivo", sans-serif; font-weight: 800; font-size: 15px;
+    background: var(--accent); color: var(--accent-ink);
+    border-radius: 8px; padding: 4px 12px; letter-spacing: 0.06em;
+  }
+  .part h2 { margin: 0; font-size: 27px; }
+
+  .toc {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px; margin-top: 24px;
+  }
+  .toc a {
+    display: block; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 15px; color: var(--ink); font-weight: 500; font-size: 13.5px;
+  }
+  .toc a:hover { border-color: var(--accent); text-decoration: none; }
+  .toc a small { display: block; color: var(--faint); font-weight: 400; font-size: 11.5px; margin-top: 2px; }
+
+  section { margin-top: 48px; scroll-margin-top: 24px; }
+
+  /* ---------- tables ---------- */
+  .tablebox { overflow-x: auto; margin: 14px 0 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 16px 9px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); font-weight: 600;
+  }
+  td.k, td:first-child .mono { white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .card table { font-size: 13px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 22px; margin: 16px 0;
+  }
+
+  /* ---------- FR rows ---------- */
+  .fr td:first-child {
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11.5px;
+    color: var(--accent); font-weight: 600; white-space: nowrap;
+  }
+
+  /* ---------- endpoint cards ---------- */
+  .ep {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    margin: 18px 0; overflow: hidden;
+  }
+  .ep-head {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--surface2);
+  }
+  .chip {
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-weight: 600; font-size: 11px;
+    letter-spacing: 0.06em; border-radius: 6px; padding: 3px 9px;
+  }
+  .m-get  { background: var(--get-soft);  color: var(--get); }
+  .m-post { background: var(--post-soft); color: var(--post); }
+  .m-put  { background: var(--put-soft);  color: var(--put); }
+  .path { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13.5px; font-weight: 500; }
+  .authb {
+    margin-left: auto; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; border-radius: 999px; padding: 3px 11px;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .a-anon { background: var(--line); color: var(--muted); }
+  .a-any  { background: var(--accent-soft); color: var(--accent); }
+  .a-onb  { background: var(--put-soft); color: var(--put); }
+  .a-act  { background: var(--get-soft); color: var(--get); }
+  .ep-body { padding: 14px 18px 16px; }
+  .ep-body > p { margin: 0 0 10px; font-size: 13.5px; }
+  .io { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 760px) { .io { grid-template-columns: 1fr; } }
+  .io h5 {
+    margin: 0 0 6px; font-family: "JetBrains Mono", monospace; font-size: 10.5px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); font-weight: 600;
+  }
+  pre {
+    margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto;
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11.8px; line-height: 1.55;
+    color: var(--ink);
+  }
+  .errs { margin-top: 12px; font-size: 12.5px; color: var(--muted); line-height: 1.8; }
+  .errs b { font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--danger); font-weight: 600; }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 10px; padding-left: 12px; border-left: 3px solid var(--accent-soft); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 16px; }
+  .legend span { display: inline-flex; gap: 6px; align-items: center; }
+
+  .callout {
+    background: var(--accent-soft); border-radius: 12px; padding: 16px 20px;
+    font-size: 14px; margin: 18px 0; max-width: none;
+  }
+  .callout b { font-weight: 650; }
+
+  ul.tight { margin: 8px 0 14px; padding-left: 20px; max-width: 76ch; }
+  ul.tight li { margin-bottom: 6px; }
+  footer { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--faint); }
+</style>
+
+<div class="wrap">
+
+  <!-- ================= HERO ================= -->
+  <header class="hero">
+    <p class="eyebrow">Muuvly · profile service · v1</p>
+    <h1>ProfileSvr Handbook</h1>
+    <p class="sub">The product requirements and the complete API reference for the profile microservice:
+    OTP-verified onboarding, device-bound identity, KYC with face liveness to tier 1, automatic banking-account
+    provisioning (NGN · CAD · virtual), virtual-account credit settlement, transaction PIN, and credential
+    recovery — everything a client team or reviewer needs in one page.</p>
+    <div class="factbar">
+      <div class="fact">Base URL <b class="mono">http://localhost:5107</b></div>
+      <div class="fact">Envelope <b class="mono">{isSuccess, data, message}</b></div>
+      <div class="fact">Auth <b>Bearer JWT</b> (SSO-issued)</div>
+      <div class="fact">Stack <b>.NET 9 · MySQL · vertical slices</b></div>
+      <div class="fact">Tests <b>67 passing</b></div>
+    </div>
+    <nav class="toc" aria-label="Contents">
+      <a href="#prd-overview">1 · Product overview<small>what this service is for</small></a>
+      <a href="#prd-journeys">2 · User journeys<small>four paths through the product</small></a>
+      <a href="#prd-fr">3 · Functional requirements<small>FR-1 … FR-24</small></a>
+      <a href="#prd-security">4 · Security model<small>token types · OTP discipline · device trust</small></a>
+      <a href="#prd-data">5 · Data &amp; integrations<small>tables · SSO · Message Centre · KYC</small></a>
+      <a href="#prd-accounts">6 · Banking accounts<small>provisioning · credit settlement · providers</small></a>
+      <a href="#prd-risks">7 · Risks &amp; metrics<small>open items · success measures</small></a>
+      <a href="#api-conventions">8 · API conventions<small>envelope · auth · encryption</small></a>
+      <a href="#api-onboarding">9 · Onboarding API<small>8 endpoints incl. KYC liveness</small></a>
+      <a href="#api-otp">10 · OTP verification<small>the single verify endpoint</small></a>
+      <a href="#api-auth">11 · Auth API<small>login · tokens · password · device change</small></a>
+      <a href="#api-profiles">12 · Profile API<small>reads · PIN · audit feed</small></a>
+      <a href="#api-webhooks">13 · Webhooks<small>virtual-account credits in</small></a>
+      <a href="#api-appendix">14 · Appendix<small>OTP purposes · KYC statuses · status codes</small></a>
+    </nav>
+  </header>
+
+  <!-- ================= PART I ================= -->
+  <div class="part" id="prd"><span class="n">PART I</span><h2>Product Requirements</h2></div>
+
+  <section id="prd-overview">
+    <p class="eyebrow">1 · overview</p>
+    <h2>What ProfileSvr is</h2>
+    <p>ProfileSvr is the identity and onboarding backbone for the Muuvly app. It owns the customer
+    profile, the devices a customer signs in from, and every one-time-passcode ceremony that proves
+    who is acting — while delegating credentials to the central SSO and message delivery to the
+    Message Centre.</p>
+    <p><strong>Goals.</strong> A new customer reaches a fully verified, transaction-ready profile in
+    one guided flow; every sensitive change (device, PIN, password) demands proof beyond a password;
+    every action leaves an audit trail with device and IP; and a downstream transaction service can
+    read risk signals (tier, fresh-device gate, PIN state) from a single DTO.</p>
+    <p><strong>Non-goals.</strong> ProfileSvr does not store passwords or mint tokens (the SSO does),
+    does not deliver messages (the Message Centre does), and does not execute transactions — it only
+    supplies the identity facts transactions are gated on.</p>
+
+    <div class="callout"><b>One sentence:</b> the SSO knows <em>who you are</em>, ProfileSvr knows
+    <em>everything else about you</em> — and nothing about you changes without an OTP.</div>
+  </section>
+
+  <section id="prd-journeys">
+    <p class="eyebrow">2 · users &amp; journeys</p>
+    <h2>Four journeys</h2>
+    <div class="tablebox"><table>
+      <thead><tr><th>Journey</th><th>Trigger</th><th>Path</th><th>End state</th></tr></thead>
+      <tbody>
+        <tr><td><b>Onboard (manual)</b></td><td>New customer installs the app</td>
+            <td>initiate → verify-auth → initiate-phone → otp/verify · Phone → create-profile</td>
+            <td><code>Active</code>, tier 0, device bound</td></tr>
+        <tr><td><b>Onboard (KYC)</b></td><td>Customer has a BVN/NIN</td>
+            <td>initiate → verify-auth → initiate-kyc (identity lookup + liveness session) →
+                otp/verify · Phone → complete-kyc (selfie ↔ ID photo match) → create-profile</td>
+            <td><code>Active</code>, <b>tier 1</b>, identity + phone verified from the BVN/NIN record,
+                <b>NGN + CAD + virtual accounts provisioned</b></td></tr>
+        <tr><td><b>Return &amp; act</b></td><td>Daily use</td>
+            <td>login (or /me on relaunch) → PIN &amp; password self-service under a profile-active token</td>
+            <td>Session with full profile DTO, live account balances, exchange rates, and risk gates</td></tr>
+        <tr><td><b>Recover</b></td><td>Lost/new phone, or interrupted signup</td>
+            <td>Device switch: initiate-device-change → change-device.
+                Resume: login → initiate-resume → resume</td>
+            <td>New device bound (24 h reduced-limit gate) or record rebuilt under the original id</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="prd-fr">
+    <p class="eyebrow">3 · functional requirements</p>
+    <h2>Requirements</h2>
+
+    <h3>Onboarding</h3>
+    <div class="tablebox"><table class="fr">
+      <tbody>
+        <tr><td>FR-1</td><td>Onboarding starts with an email and a device; the service pre-allocates the identity (<code>sourceId</code>) that becomes both the SSO user's SourceId and the profile id.</td></tr>
+        <tr><td>FR-2</td><td>The email is proven by a 6-digit OTP before any account exists; verify-auth then creates the SSO auth and a staging record (<code>status: AuthCreated</code>) and returns onboarding-typed tokens so no separate login is needed.</td></tr>
+        <tr><td>FR-3</td><td>The phone number is proven by an OTP delivered over WhatsApp (SMS switchable by config); in the KYC path the phone comes from the BVN/NIN record, never from the client.</td></tr>
+        <tr><td>FR-4</td><td>The profile is only <em>created</em> (status <code>Active</code>) at the final step, after both email and phone are verified and personal details are supplied.</td></tr>
+        <tr><td>FR-5</td><td>KYC is proven biometrically: an AWS face-liveness session opens at <code>initiate-kyc</code>, and <code>complete-kyc</code> compares the liveness selfie with the BVN/NIN photo — a match marks the id verified, sets <code>kycStatus: Approved</code>, promotes to tier 1 and provisions the banking accounts. A failed liveness or mismatch is a soft failure the client retries with a new session.</td></tr>
+        <tr><td>FR-6</td><td>Re-initiating before the profile exists simply resends a fresh OTP (60 s cooldown), invalidating earlier codes.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Devices</h3>
+    <div class="tablebox"><table class="fr">
+      <tbody>
+        <tr><td>FR-7</td><td>A profile may accumulate many devices over time, but exactly <b>one is in use</b> at any moment — and an in-use device serves exactly one profile. Released bindings are kept as history.</td></tr>
+        <tr><td>FR-8</td><td>Devices are registered <em>only</em> inside OTP-protected flows (onboarding, resume, device change); there is no standalone registration endpoint.</td></tr>
+        <tr><td>FR-9</td><td>Login refuses any device other than the active one (403); only the OTP ceremonies move a binding.</td></tr>
+        <tr><td>FR-10</td><td>A locked-out user (new phone, no token, no profile id) switches devices with password + email OTP alone: <code>initiate-device-change</code> → <code>change-device</code>.</td></tr>
+        <tr><td>FR-11</td><td>The active binding's <code>linked_at</code> opens a <b>24-hour reduced-limit gate</b> (<code>deviceRecentlyLinked</code>) that a transaction service reads live; it expires by arithmetic, not by a job.</td></tr>
+        <tr><td>FR-12</td><td>An SSO account with no local record (interrupted signup) resumes via its own OTP ceremony, reclaiming the original profile id from the token's SourceId claim; a device in use by another profile cannot be claimed through resume.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Credentials &amp; PIN</h3>
+    <div class="tablebox"><table class="fr">
+      <tbody>
+        <tr><td>FR-13</td><td>Login is an SSO password grant gated on the registered active device; it returns tokens, a <code>deviceStatus</code> (New / Existing / Unlinked), the token <code>type</code>, and the full profile DTO.</td></tr>
+        <tr><td>FR-14</td><td>Sessions refresh without a password (<code>/auth/refresh</code>); app relaunch rehydrates from the token alone (<code>/auth/me</code>).</td></tr>
+        <tr><td>FR-15</td><td>Password change requires the current password; password reset requires an email OTP; both execute on the SSO.</td></tr>
+        <tr><td>FR-16</td><td>The 4-digit transaction PIN is set once, changed with the current PIN, or reset via email OTP; it is stored as PBKDF2-SHA256 with a per-profile salt and is verified during transactions, not by this API.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Banking accounts &amp; money-in</h3>
+    <div class="tablebox"><table class="fr">
+      <tbody>
+        <tr><td>FR-25</td><td>Once the identity (BVN/NIN) is verified, the service provisions the banking chain automatically: customer (CIF) → NGN account → CAD account → virtual (collection) account — each step get-or-create and best-effort, never blocking the caller.</td></tr>
+        <tr><td>FR-26</td><td>Failed provisioning surfaces as <code>kycStatus: ProvisioningFailed</code> and <b>self-heals</b>: create-profile, login and refresh each retry the missing pieces until the chain completes.</td></tr>
+        <tr><td>FR-27</td><td>The bank behind the accounts is replaceable: endpoints only see a facade, with the core-banking provider (OneCore today) and the virtual-account provider (VantPay today) swappable behind two interfaces.</td></tr>
+        <tr><td>FR-28</td><td>Login and refresh return the live account list (with balances) and the latest exchange rate per currency pair; provider outages yield empty lists, never a failed login.</td></tr>
+        <tr><td>FR-29</td><td>Incoming virtual-account credits arrive on a signed webhook, are stored idempotently by <code>transactionRef</code>, and a background job settles them into the CBA naira account — with configured platform and provider charges — retrying transient failures and dead-lettering permanent ones.</td></tr>
+        <tr><td>FR-30</td><td>The credit-posting job carries a heartbeat surfaced on <code>/health</code>; a stalled job degrades health. A MySQL advisory lock keeps multiple replicas from double-posting.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Platform</h3>
+    <div class="tablebox"><table class="fr">
+      <tbody>
+        <tr><td>FR-17</td><td>Every response uses the <code>{isSuccess, data, message}</code> envelope with a human-readable message, always populated.</td></tr>
+        <tr><td>FR-18</td><td>Every significant action writes an activity row: type, profile, device, client IP, timestamp — readable by the owner as a paged feed.</td></tr>
+        <tr><td>FR-19</td><td>Tokens carry a <code>type</code> claim (onboarding · temporary · profile-active) written to the SSO; ProfileSvr re-derives it per request from the live profile status so a stale token can never cross a gate.</td></tr>
+        <tr><td>FR-20</td><td>Onboarding-typed tokens reach only onboarding endpoints; profile-active tokens reach everything except onboarding; crossing the line is 403.</td></tr>
+        <tr><td>FR-21</td><td>OTP emails are branded HTML (configurable brand name); WhatsApp/SMS are plain text; all sends verify the Message Centre's response body, not just the HTTP status.</td></tr>
+        <tr><td>FR-22</td><td>Optional end-to-end payload encryption (AES-256-GCM envelope) can be switched on by config; docs and health stay plaintext.</td></tr>
+        <tr><td>FR-23</td><td>BVN and NIN are stored raw but always masked to the last 4 digits in every API response.</td></tr>
+        <tr><td>FR-24</td><td>Schema changes apply automatically at startup via EF Core migrations.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="prd-security">
+    <p class="eyebrow">4 · security model</p>
+    <h2>Three layers of proof</h2>
+
+    <h3>Token types</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>type</th><th>When</th><th>May reach</th><th>May not reach</th></tr></thead>
+      <tbody>
+        <tr><td><code>temporary</code></td><td>Token authenticates, no profile row</td><td>resume bootstrap, /me, otp/verify</td><td>everything else</td></tr>
+        <tr><td><code>onboarding</code></td><td>Profile <code>AuthCreated</code></td><td>initiate-phone, initiate-kyc, create-profile (+ shared)</td><td>PIN &amp; password endpoints</td></tr>
+        <tr><td><code>profile-active</code></td><td>Profile <code>Active</code></td><td>everything except onboarding</td><td>onboarding endpoints</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">The claim lives in the JWT (written to the SSO before token mint) for other services
+    to read — but ProfileSvr always recomputes it from the database per request, so the gate flips the
+    instant <code>create-profile</code> succeeds, with no stale-token window.</p>
+
+    <h3>OTP discipline — identical everywhere</h3>
+    <ul class="tight">
+      <li>6-digit cryptographically random code; public 16-character <code>retrievalCode</code> reference (no 0/O/1/I).</li>
+      <li>Stored as <code>SHA-256(code | purpose | target)</code> — a code can never verify outside the exact ceremony and recipient it was minted for.</li>
+      <li>10-minute expiry · 60-second resend cooldown · <b>5 attempts then locked</b> · one active code per purpose · superseded codes invalidated.</li>
+      <li>If the send fails after issuing, the orphaned code is consumed and the caller gets a 502 — no live code without a delivered message.</li>
+    </ul>
+
+    <h3>Everything else</h3>
+    <ul class="tight">
+      <li><b>PIN</b>: PBKDF2-SHA256, 100k iterations, fresh random salt per set; constant-time compare.</li>
+      <li><b>Device trust</b>: password proves the account, the mailbox OTP approves the device — stolen credentials alone cannot enroll an attacker's device.</li>
+      <li><b>Payload encryption</b> (optional): AES-256-GCM, fresh nonce per message, authenticated — a flipped byte is rejected, never garbled.</li>
+      <li><b>Fail closed</b>: SSO or KYC unreachable → 503 before anything persists.</li>
+      <li><b>Webhook integrity</b>: inbound credit notifications must carry <code>X-Signature</code> =
+        HMAC-SHA256 of the raw body (fixed-time compared); outbound CBA postings are signed the same way.</li>
+      <li><b>Biometric proof</b>: tier 1 requires a live selfie matched against the BVN/NIN photo —
+        a stolen id number alone cannot pass KYC.</li>
+    </ul>
+  </section>
+
+  <section id="prd-data">
+    <p class="eyebrow">5 · data &amp; integrations</p>
+    <h2>Data model &amp; dependencies</h2>
+    <div class="tablebox"><table>
+      <thead><tr><th>Table</th><th>Holds</th><th>Key columns</th></tr></thead>
+      <tbody>
+        <tr><td><code>profiles</code></td><td>The customer record and every status flag</td>
+            <td>status, email/phone + confirmations, names, DOB, gender, tier, address, masked BVN/NIN + verifications, kycStatus (+ reason), cif, naira/CAD/virtual account numbers, PIN salt/hash, device-change gate timestamps</td></tr>
+        <tr><td><code>devices</code></td><td>Registered devices with hardware metadata</td>
+            <td>unique deviceIdentifier, name, platform, OS, manufacturer, model, appVersion</td></tr>
+        <tr><td><code>user_devices</code></td><td>Profile↔device bindings; one active per side, history kept</td>
+            <td>linked_at_utc (the 24 h gate clock), released_at_utc</td></tr>
+        <tr><td><code>otp_codes</code></td><td>Every OTP ever issued</td>
+            <td>retrieval_code (unique), purpose, target, bound hash, attempts, expiry, consumption, pre-allocated source_id</td></tr>
+        <tr><td><code>activities</code></td><td>Immutable audit trail</td>
+            <td>type, profile, device, ip_address, timestamp</td></tr>
+        <tr><td><code>virtual_account_mappings</code></td><td>Virtual (collection) account → CBA naira account routing</td>
+            <td>virtual_account (unique), cba_account, profile, account name/bank</td></tr>
+        <tr><td><code>virtual_account_credits</code></td><td>Every inbound credit notification, and its settlement state</td>
+            <td>transaction_ref (unique), virtual_account, amount, sender details, credit_posted, attempts, posting_abandoned, provider response</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="tablebox"><table>
+      <thead><tr><th>Dependency</th><th>Used for</th><th>Contract notes</th></tr></thead>
+      <tbody>
+        <tr><td><b>SSO</b> (OpenIddict)</td><td>Accounts, password/refresh grants, JWKS validation, custom claims</td>
+            <td>Pre-registration calls authenticate with a client-credentials <em>service client</em>; claim create replaces in place; SourceId claim = profile id</td></tr>
+        <tr><td><b>Message Centre</b></td><td>Email (HTML template), WhatsApp, SMS</td>
+            <td>Queue-based; response body's <code>isSuccessful</code> is checked; senders (<code>EmailFrom</code>, WhatsApp <code>from: 91096</code>) are required for actual delivery; phone numbers sent digits-only</td></tr>
+        <tr><td><b>KYC provider</b> (DigitKYC)</td><td>BVN/NIN lookup → identity, phone, photo</td>
+            <td>Pluggable HTTP client behind <code>IKycClient</code>; deterministic mock in dev (numbers ending 00 = not found)</td></tr>
+        <tr><td><b>AWS Rekognition</b></td><td>Face-liveness sessions and selfie ↔ ID-photo comparison</td>
+            <td>Behind <code>IFaceVerificationService</code>; mock switchable via <code>AWS:UseMockFaceVerification</code></td></tr>
+        <tr><td><b>OneCore</b> (core banking)</td><td>Customer (CIF), NGN + CAD deposit accounts, exchange rates, credit posting</td>
+            <td>Behind <code>IAccountProvider</code>; client-credentials token against its own SSO; product codes per currency in config</td></tr>
+        <tr><td><b>VantPay</b> (DigitVirtual)</td><td>Static virtual (collection) accounts + inbound credit webhooks</td>
+            <td>Behind <code>IVirtualAccountProvider</code>; webhook signed with HMAC-SHA256 when <code>DigitVirtual:WebhookSecret</code> is set</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="prd-accounts">
+    <p class="eyebrow">6 · banking accounts</p>
+    <h2>Accounts &amp; money-in</h2>
+    <p>Once KYC approves an identity, ProfileSvr turns the profile into a banked customer without any
+    further client calls — and once the customer shares their virtual account number, incoming transfers
+    settle into their naira account automatically.</p>
+
+    <h3>The provisioning chain</h3>
+    <p>Runs first at <code>complete-kyc</code> (the provider requires a verified BVN/NIN), and re-runs at
+    <code>create-profile</code>, <code>login</code> and <code>refresh</code> until complete:</p>
+    <ul class="tight">
+      <li><b>1 · Customer (CIF)</b> — searched by email on OneCore first, created only if absent (idempotent).</li>
+      <li><b>2 · NGN account</b>, then <b>3 · CAD account</b> — existing accounts in the right currency are adopted; otherwise opened with the configured product codes.</li>
+      <li><b>4 · Virtual account</b> — a static VantPay collection account tied to the BVN/NIN, opened only after the NGN account exists so every credit has somewhere to land; its routing row (<code>virtual → naira</code>) is written in the same transaction.</li>
+    </ul>
+    <p class="note">Every step is best-effort: a provider outage logs a warning, leaves
+    <code>kycStatus: ProvisioningFailed</code> ("we'll retry automatically"), and the next login or refresh
+    picks up where it stopped. The caller's request never fails because a bank was down.</p>
+
+    <h3>The money-in pipeline</h3>
+    <ul class="tight">
+      <li><b>Notify</b> — the provider calls <code>POST /webhook/virtual-account-credit</code>; the signature is verified and the credit stored, idempotent on <code>transactionRef</code> (redeliveries and races are absorbed).</li>
+      <li><b>Settle</b> — the <code>PostCbaCreditsJob</code> sweeps stored <code>SUCCESSFUL</code> credits every ~2 s (batch 1000), resolves the virtual → naira mapping, computes the platform charge (<code>ChargePercent</code>) and provider charge (<code>ProviderChargePercent</code>), and posts a signed credit to OneCore's integrations webhook.</li>
+      <li><b>Converge</b> — a CBA "duplicate reference" reply counts as settled; transient failures retry each tick up to <code>MaxPostAttempts</code>; permanent (4xx) failures dead-letter immediately with the error preserved.</li>
+      <li><b>Observe</b> — the job beats a heartbeat that <code>/health</code> reports; a stalled job flips health to <code>degraded</code>. Replicas coordinate through a MySQL advisory lock.</li>
+    </ul>
+
+    <h3>Configuration surface</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Section</th><th>Drives</th><th>Keys</th></tr></thead>
+      <tbody>
+        <tr><td><code>OneCore</code></td><td>Core banking + credit posting</td><td>BaseUrl, SsoBaseUrl, ClientId/Secret, OfficeId, AccountOfficerId, NairaProductId, CadProductId, WebhookUrl, TransferIntegrationKey/Secret, VirtualAccountCreditNarration</td></tr>
+        <tr><td><code>DigitVirtual</code></td><td>Virtual accounts + webhook auth</td><td>BaseUrl, SsoBaseUrl, ClientId/Secret, BankName, WebhookSecret</td></tr>
+        <tr><td><code>VirtualAccountCredit</code></td><td>The settlement job</td><td>Enabled, BatchSize, IntervalSeconds, MaxPostAttempts, ChargePercent, ProviderChargePercent</td></tr>
+        <tr><td><code>AWS</code></td><td>Face liveness</td><td>AccessKey, SecretKey, Region, UseMockFaceVerification</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">When OneCore / DigitVirtual base URLs are unset, deterministic mocks provision fake
+    accounts so local development runs end-to-end — never ship the mocks to production.</p>
+  </section>
+
+  <section id="prd-risks">
+    <p class="eyebrow">7 · risks &amp; metrics</p>
+    <h2>Open items, risks, and what success looks like</h2>
+    <div class="tablebox"><table>
+      <thead><tr><th>Risk / open item</th><th>Impact</th><th>Mitigation / owner</th></tr></thead>
+      <tbody>
+        <tr><td>WhatsApp delivery depends on the Message Centre's queue consumer and an approved business template</td><td>Phone leg blocks</td><td>SMS channel switch in config; MCS team owns template approval</td></tr>
+        <tr><td>OneCore / VantPay / AWS credentials unset fall back to mocks or empty results</td><td>Fake accounts in dev could be mistaken for real; empty balances after login</td><td>Fail startup in production when a required provider is unconfigured</td></tr>
+        <tr><td>An unset <code>DigitVirtual:WebhookSecret</code> skips signature verification</td><td>Forged credit notifications would be stored (though not settled without a mapping)</td><td>Make the secret mandatory outside dev</td></tr>
+        <tr><td>Charge percentages live in config with no audit of applied values per credit</td><td>Reconciliation disputes hard to settle</td><td>Persist the computed charge on each credit row</td></tr>
+        <tr><td>Message Centre reports "queued", never "delivered"</td><td>Silent drops invisible</td><td>Request delivery callbacks/status from MCS team</td></tr>
+        <tr><td>Payload-encryption key is a shared symmetric secret</td><td>Rotation requires an app release</td><td>Evolve to per-device ECDH negotiated at onboarding</td></tr>
+        <tr><td>Secrets load from a gitignored <code>appsettings.Secrets.json</code> or env vars</td><td>Leak risk if the pattern is bypassed</td><td>Move to a managed secret store before production; rotate anything ever committed</td></tr>
+        <tr><td>PIN endpoint has no attempt lockout (verification happens in the transaction service)</td><td>Depends on downstream throttling</td><td>Mirror the OTP 5-attempt rule where the PIN is verified</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Success metrics</h3>
+    <ul class="tight">
+      <li><b>Onboarding completion</b>: initiate → Active conversion, and time-to-Active.</li>
+      <li><b>OTP health</b>: delivery success per channel, verify-on-first-attempt rate, lockout rate.</li>
+      <li><b>Recovery</b>: device-switch and resume completion without support contact.</li>
+      <li><b>Risk</b>: share of transactions inside the 24 h fresh-device gate; KYC tier-1 uptake;
+        liveness pass rate and face-match rate.</li>
+      <li><b>Money-in</b>: credit settlement latency (webhook → CBA posting), retry depth,
+        dead-letter count (target: zero).</li>
+    </ul>
+  </section>
+
+  <!-- ================= PART II ================= -->
+  <div class="part" id="api"><span class="n">PART II</span><h2>API Reference</h2></div>
+
+  <section id="api-conventions">
+    <p class="eyebrow">8 · conventions</p>
+    <h2>Read this first</h2>
+    <div class="card">
+      <p><b>Envelope.</b> Every response, success or failure, is
+      <code>{ "isSuccess": bool, "data": … | null, "message": string }</code> — the message is always
+      populated and safe to show in the UI. HTTP status codes carry the semantics.</p>
+      <p><b>Auth.</b> Protected endpoints take <code>Authorization: Bearer &lt;accessToken&gt;</code>.
+      Tokens come from <code>verify-auth</code> (during onboarding) or <code>login</code>, and refresh
+      via <code>/api/auth/refresh</code>. The badge on each endpoint shows who may call it.</p>
+      <p><b>OTP ceremonies.</b> Every <code>initiate-*</code> returns a <code>retrievalCode</code>; quote
+      it back together with the 6-digit <code>otp</code> the user received. Codes expire in 10 minutes,
+      lock after 5 wrong attempts, and resend is throttled to once per 60 seconds.</p>
+      <p style="margin:0"><b>Payload encryption</b> (when <code>Encryption:Enabled</code>): request and
+      response bodies travel as <code>{ "data": "base64(nonce‖ciphertext‖tag)" }</code>, AES-256-GCM with
+      the shared key. <code>/health</code>, <code>/swagger</code>, <code>/openapi</code> stay plaintext.</p>
+    </div>
+    <div class="legend">
+      <span><span class="authb a-anon">anon</span> no token</span>
+      <span><span class="authb a-any">🔒 any</span> any valid token</span>
+      <span><span class="authb a-onb">🔒 onboarding</span> onboarding type only</span>
+      <span><span class="authb a-act">🔒 profile-active</span> profile-active type only</span>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-get">GET</span><span class="path">/health</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Liveness probe; also proves the envelope shape. Reports the credit-posting job's heartbeat —
+        a stalled job flips <code>status</code> to <code>degraded</code>.</p>
+        <div class="io"><div><h5>Response 200</h5><pre>{ "isSuccess": true,
+  "data": {
+    "status": "healthy",   // or "degraded"
+    "creditJob": {
+      "name": "cba-credit-post",
+      "enabled": true,
+      "lastTickUtc": "…",
+      "ticks": 120491,
+      "healthy": true } },
+  "message": "Operation successful." }</pre></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------- ONBOARDING ---------- -->
+  <section id="api-onboarding">
+    <p class="eyebrow">9 · onboarding</p>
+    <h2>Onboarding</h2>
+    <p class="muted">The sequence: initiate → verify-auth → initiate-phone (or initiate-kyc →
+    otp/verify · Phone → complete-kyc) → create-profile. Recovery: initiate-resume → resume.
+    The KYC pair also works <em>after</em> the profile is active — the app's phone-first journey.</p>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/initiate</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Start onboarding: checks the email is new (locally and on the SSO), registers/refreshes the
+        device, pre-allocates the identity, and emails the OTP. Send full <code>device</code> details the
+        first time; a known <code>deviceId</code> (or both) afterwards. Calling again resends a fresh code.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "emailAddress": "ada@example.com",
+  "deviceId": null,
+  "device": {
+    "deviceIdentifier": "install-abc-123",
+    "name": "Ada's iPhone",
+    "platform": "ios",
+    "osName": "iOS", "osVersion": "18.2",
+    "manufacturer": "Apple", "model": "iPhone 16",
+    "appVersion": "1.0.0" } }</pre></div>
+          <div><h5>Response 202</h5><pre>{ "emailAddress": "ada@example.com",
+  "deviceId": "GUID",
+  "retrievalCode": "GKSLW7AVA8YJAWAM",
+  "expiresAtUtc": "…" }
+// message: "OTP sent to your email address."</pre></div>
+        </div>
+        <p class="errs"><b>409</b> profile or SSO account already exists (points at resume) ·
+        <b>422</b> unknown deviceId with no device info · <b>429</b> resend cooldown · <b>503</b> SSO unreachable</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/verify-auth</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Verify the email OTP, create the <b>SSO auth</b> (SourceId = profile id) and the staging record
+        (<code>AuthCreated</code>, email confirmed, device bound) — then log the new account in and return
+        onboarding-typed tokens, so the flow continues without a login call.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "emailAddress": "ada@example.com",
+  "deviceId": "GUID",
+  "retrievalCode": "GKSL…",
+  "otp": "123456",
+  "password": "S3cure-Pass!",
+  "username": null }</pre></div>
+          <div><h5>Response 201</h5><pre>{ "profileId": "GUID",
+  "emailAddress": "ada@example.com",
+  "emailConfirmed": true,
+  "status": "AuthCreated",
+  "type": "onboarding",
+  "deviceId": "GUID",
+  "createdAtUtc": "…",
+  "tokens": {
+    "accessToken": "eyJ…", "refreshToken": "…",
+    "idToken": "…", "tokenType": "Bearer",
+    "expiresIn": 3599 } }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> wrong / expired / wrong-purpose / wrong-device code · <b>409</b> profile
+        already exists · <b>429</b> attempt lockout · <b>502/503</b> SSO rejection / unreachable</p>
+        <p class="note">Password rules: min 8, uppercase, lowercase, number, special character —
+        each failure gets its own message.</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/initiate-phone</span><span class="authb a-onb">🔒 onboarding</span></div>
+      <div class="ep-body">
+        <p>Phone leg: the profile is resolved from the device's active binding — no profile id needed.
+        Stores the phone (unconfirmed, uniqueness-checked) and sends the OTP over WhatsApp.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "phoneNumber": "+2348060168634",
+  "deviceId": "GUID" }</pre></div>
+          <div><h5>Response 202</h5><pre>{ "profileId": "GUID",
+  "phoneNumber": "+2348060168634",
+  "channel": "whatsapp",
+  "retrievalCode": "…", "expiresAtUtc": "…" }</pre></div>
+        </div>
+        <p class="errs"><b>403</b> wrong token type · <b>409</b> phone already confirmed / used by another
+        profile · <b>422</b> device not linked to any profile · <b>429</b> cooldown · <b>502</b> send failed</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/initiate-kyc</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>KYC start, valid before <em>or</em> after the profile is active: submit <b>either</b>
+        <code>bvn</code> <b>or</b> <code>nin</code> (11 digits). The identity record (names, DOB, gender,
+        photo) is looked up, the profile pre-filled from it, and an <b>AWS face-liveness session</b> opened
+        for the client SDK. When the phone is not yet confirmed, it is adopted from the record — never from
+        the client — and an OTP goes to it (<code>otp</code> is <code>null</code> when the phone is already
+        confirmed). The response reveals only a masked number.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "bvn": "22233344455",
+  "nin": null }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "idType": "bvn",
+  "kycStatus": "Pending",
+  "identity": {
+    "firstName": "Ada", "lastName": "Obi",
+    "middleName": null,
+    "dateOfBirth": "1995-05-15", "gender": "Female",
+    "maskedPhoneNumber": "**********8634",
+    "image": "base64…" },
+  "liveness": { "sessionId": "…", "authToken": "…" },
+  "otp": {                       // null when phone already confirmed
+    "channel": "WhatsApp",
+    "retrievalCode": "…", "expiresAtUtc": "…" } }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> both/neither id supplied · <b>403</b> device not linked · <b>409</b> id already
+        verified / id or phone used by another profile · <b>422</b> no record for this BVN/NIN, or email not
+        yet confirmed · <b>429</b> cooldown · <b>502/503</b> KYC or liveness provider errors</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/complete-kyc</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>Finish KYC after the client SDK runs the liveness session: fetches the liveness result, compares
+        the live selfie with the BVN/NIN photo, and on a match marks the id verified, sets
+        <code>kycStatus: Approved</code>, promotes to <b>tier 1</b> — and <b>provisions the banking
+        accounts</b> (CIF → NGN → CAD → virtual). A failed liveness or face mismatch is a <em>soft</em>
+        failure: HTTP 200 with <code>isLive</code>/<code>faceMatch</code> false — retry with a fresh
+        session from initiate-kyc.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "sessionId": "…" }   // from initiate-kyc</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "idType": "bvn",
+  "livenessScore": 0.98, "isLive": true,
+  "faceMatch": true, "faceMatchConfidence": 99.2,
+  "bvnIsVerified": true, "ninIsVerified": false,
+  "phoneNumberConfirmed": true,
+  "tier": 1,
+  "kycStatus": "Approved",   // or ProvisioningFailed
+  "cif": "0012345",
+  "nairaAccount": "1000012345",
+  "cadAccount": "1000012346",
+  "virtualAccount": "8812345678",
+  "virtualAccountBank": "Digitvant Microfinance Bank Ltd" }</pre></div>
+        </div>
+        <p class="errs"><b>403</b> device not linked / no profile · <b>409</b> identity already verified ·
+        <b>422</b> no BVN/NIN staged (run initiate-kyc first) · <b>502/503</b> liveness, KYC or comparison
+        provider errors</p>
+        <p class="note">Account provisioning is best-effort: on a provider outage the response shows
+        <code>kycStatus: ProvisioningFailed</code> and the missing accounts are created automatically at
+        create-profile, login or refresh.</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/create-profile</span><span class="authb a-onb">🔒 onboarding</span></div>
+      <div class="ep-body">
+        <p>The final step — creates the profile proper. Identity comes from the token (SourceId claim,
+        email fallback); the <code>deviceId</code> must match the active binding; email <em>and</em> phone
+        must both be confirmed. Flips status to <code>Active</code> and the SSO type claim to
+        <code>profile-active</code>, and retries any banking-account provisioning still missing from KYC.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "firstName": "Ada",
+  "lastName": "Obi",
+  "middleName": null,
+  "dateOfBirth": "1995-05-15" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "firstName": "Ada", "lastName": "Obi",
+  "middleName": null,
+  "dateOfBirth": "1995-05-15",
+  "status": "Active",
+  "updatedAtUtc": "…" }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> invalid date of birth · <b>403</b> device not linked / token resolves to
+        no profile / wrong token type · <b>422</b> email or phone not confirmed yet</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/initiate-resume</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>Recovery bootstrap for an SSO account with no local record (interrupted verify-auth, or a user
+        from another system). Log in first — the password proves the account — then this sends a
+        <b>device-approval OTP</b> to the account email. Empty body.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ }</pre></div>
+          <div><h5>Response 202</h5><pre>{ "emailAddress": "ada@example.com",
+  "channel": "email",
+  "retrievalCode": "…", "expiresAtUtc": "…" }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> token has no email claim · <b>409</b> a profile already exists — nothing to resume · <b>429</b> cooldown</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/onboarding/resume</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>Verifies the resume OTP, registers the device (this OTP is its approval — the only way a resume
+        device is registered), and recreates the staging record <b>under the token's original SourceId</b>.
+        Onboarding then continues at the phone leg. Idempotent when a record already exists.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "retrievalCode": "…",
+  "otp": "123456",
+  "deviceId": null,
+  "device": { …full device details… } }</pre></div>
+          <div><h5>Response 201</h5><pre>{ "profileId": "GUID",   // = SourceId
+  "emailAddress": "ada@example.com",
+  "status": "AuthCreated",
+  "deviceId": "GUID",
+  "resumed": true }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> bad/expired code, wrong purpose or account · <b>409</b> device actively
+        in use by another profile (victim untouched) · <b>422</b> unknown deviceId with no details · <b>429</b> lockout</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------- OTP ---------- -->
+  <section id="api-otp">
+    <p class="eyebrow">10 · otp verification</p>
+    <h2>The single verify endpoint</h2>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/otp/verify</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>One endpoint verifies every plain confirmation; the <code>section</code> enum selects what gets
+        confirmed. <code>Email</code> confirms the email address; <code>Phone</code> confirms the phone —
+        including the phone adopted from a BVN/NIN record during KYC (the identity itself is verified
+        biometrically at <code>complete-kyc</code>, not by an OTP). Already-verified sections return success
+        idempotently. (Flows with extra inputs — verify-auth, pin-reset, password-reset, change-device,
+        resume — keep their own endpoints.)</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "retrievalCode": "…",
+  "otp": "123456",
+  "section": "Phone"   // Email | Phone
+}</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "section": "Phone",
+  "emailConfirmed": true,
+  "phoneNumberConfirmed": true,
+  "bvnIsVerified": false,
+  "ninIsVerified": false,
+  "tier": 0,
+  "updatedAtUtc": "…" }
+// message per section, e.g. "Phone number verified."</pre></div>
+        </div>
+        <p class="errs"><b>400</b> unknown section, wrong code, wrong purpose/profile, contact changed since
+        issue · <b>403</b> device not linked · <b>422</b> no phone on the profile · <b>429</b> lockout</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------- AUTH ---------- -->
+  <section id="api-auth">
+    <p class="eyebrow">11 · auth</p>
+    <h2>Sessions, passwords, device change</h2>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/auth/login</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>SSO password grant gated on the device: the <code>deviceId</code> must be registered, and if the
+        profile is bound to a <em>different</em> device the login is refused — the device-change ceremony is
+        the only way to move. Returns tokens, a <code>deviceStatus</code>, the token <code>type</code>, the
+        full profile DTO (null for SSO-only accounts mid-resume) — and, for a provisioned profile, the
+        <b>live account balances and latest exchange rates</b>. Any missing accounts are re-provisioned
+        first (the self-heal); provider outages yield empty lists, never a failed login.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "username": "ada@example.com",
+  "password": "S3cure-Pass!",
+  "deviceId": "GUID" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "accessToken": "eyJ…",
+  "refreshToken": "…", "idToken": "…",
+  "tokenType": "Bearer", "expiresIn": 3599,
+  "deviceStatus": "Existing",  // New | Existing | Unlinked
+  "type": "profile-active",
+  "profile": { …profile DTO, see /auth/me… },
+  "accounts": [
+    { "accountName": "ADA OBI", "accountNumber": "1000012345",
+      "currency": "NGN", "balance": 25000.50 },
+    { "accountName": "ADA OBI", "accountNumber": "1000012346",
+      "currency": "CAD", "balance": 120.00 } ],
+  "rates": [
+    { "sourceCode": "CAD", "targetCode": "NGN", "type": "Transfer",
+      "buyRate": 1080.0, "sellRate": 1100.0,
+      "date": "…", "updatedAtUtc": "…" } ] }</pre></div>
+        </div>
+        <p class="errs"><b>401</b> wrong credentials · <b>403</b> profile bound to a different device ·
+        <b>422</b> unregistered deviceId · <b>503</b> SSO unreachable</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/auth/refresh</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Exchanges the refresh token and, like login, resolves the profile from the new token, retries
+        any missing account provisioning, and returns the profile DTO with accounts and rates.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "token": "&lt;refreshToken&gt;" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "accessToken": "…", "refreshToken": "…",
+  "idToken": "…", "tokenType": "Bearer",
+  "expiresIn": 3599,
+  "type": "profile-active",
+  "profile": { …profile DTO… },
+  "accounts": [ … ], "rates": [ … ] }</pre></div>
+        </div>
+        <p class="errs"><b>401</b> refresh token invalid or expired</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-get">GET</span><span class="path">/api/auth/me</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>Reload the caller's profile from the token alone — the app-relaunch pattern. Same DTO as login.</p>
+        <div class="io"><div style="grid-column: 1 / -1"><h5>Response 200 — the profile DTO</h5><pre>{ "profileId": "GUID", "status": "Active",
+  "emailAddress": "ada@example.com", "phoneNumber": "+2348060168634",
+  "firstName": "Ada", "lastName": "Obi", "middleName": null,
+  "gender": "Female", "dateOfBirth": "1995-05-15",
+  "tier": 1, "address": "12 Marina Road, Lagos",
+  "cif": "0012345",
+  "nairaAccount": "1000012345", "cadAccount": "1000012346",
+  "virtualAccount": "8812345678",
+  "virtualAccountBank": "Digitvant Microfinance Bank Ltd",
+  "kycStatus": "Approved", "kycStatusReason": null,
+  "bvn": "*******4455", "nin": null,
+  "emailConfirmed": true, "phoneNumberConfirmed": true,
+  "bvnIsVerified": true, "ninIsVerified": false,
+  "hasSetTransactionPin": true, "profileCompleted": true,
+  "activeDeviceId": "GUID",
+  "activeDeviceLinkedAtUtc": "…", "deviceRecentlyLinked": false,
+  "deviceChangedAtUtc": null, "deviceRecentlyChanged": false,
+  "createdAtUtc": "…" }</pre></div></div>
+        <p class="errs"><b>401</b> no/invalid token · <b>403</b> token resolves to no profile</p>
+        <p class="note"><code>deviceRecentlyLinked</code> is the <b>transaction-limit gate</b>: true while
+        the active device binding is under 24 hours old.</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/auth/password-change</span><span class="authb a-act">🔒 profile-active</span></div>
+      <div class="ep-body">
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "currentPassword": "…",
+  "newPassword": "…" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "message": "Password changed successfully." }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> current password wrong / new password fails complexity · <b>403</b> device or type gate · <b>503</b> SSO unreachable</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/auth/initiate-password-reset</span><span class="authb a-act">🔒 profile-active</span></div>
+      <div class="ep-body">
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID" }</pre></div>
+          <div><h5>Response 202</h5><pre>{ "profileId": "GUID", "channel": "email",
+  "retrievalCode": "…", "expiresAtUtc": "…" }</pre></div>
+        </div>
+        <p class="errs"><b>403</b> gates · <b>429</b> cooldown · <b>502</b> send failed</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/auth/password-reset</span><span class="authb a-act">🔒 profile-active</span></div>
+      <div class="ep-body">
+        <p>Verifies the OTP, then obtains the SSO's reset token server-to-server and sets the new password.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "retrievalCode": "…", "otp": "123456",
+  "newPassword": "…" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "message": "Password reset successfully." }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> bad code / weak password · <b>429</b> lockout · <b>502/503</b> SSO errors</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/auth/initiate-device-change</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Built for the <b>locked-out user</b> — a new phone can't log in (403) and holds no token or
+        profile id. The password is the first factor, verified against the SSO before any OTP is sent;
+        the profile resolves from the credentials.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "username": "ada@example.com",
+  "password": "S3cure-Pass!" }</pre></div>
+          <div><h5>Response 202</h5><pre>{ "channel": "email",
+  "retrievalCode": "…", "expiresAtUtc": "…" }</pre></div>
+        </div>
+        <p class="errs"><b>401</b> wrong password (no OTP sent) · <b>422</b> no profile for this account — use resume · <b>429</b> cooldown</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/auth/change-device</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>The mailbox OTP is the second factor. Registers the replacement device (details for a brand-new
+        one, or a known <code>deviceId</code>) and moves the exclusive binding in one step — the old device's
+        row is released to history and its logins start failing. The fresh <code>linked_at</code> opens the
+        24-hour reduced-limit gate.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "username": "ada@example.com",
+  "retrievalCode": "…", "otp": "123456",
+  "deviceId": null,
+  "device": { …full device details… } }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "deviceId": "GUID",
+  "deviceChangedAtUtc": "…",
+  "deviceRecentlyLinked": true }
+// "Device changed successfully. You can now
+//  log in from this device."</pre></div>
+        </div>
+        <p class="errs"><b>400</b> bad code / wrong account · <b>422</b> no profile, or unknown deviceId with no details · <b>429</b> lockout</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------- PROFILES ---------- -->
+  <section id="api-profiles">
+    <p class="eyebrow">12 · profile</p>
+    <h2>Reads, PIN, audit</h2>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-get">GET</span><span class="path">/api/profiles/{id}</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Full profile by id — the same fields as the <a href="#api-auth">/auth/me</a> DTO plus
+        <code>deviceId</code> (the creating device) and <code>updatedAtUtc</code>. BVN/NIN always masked.
+        <span class="muted">404 when not found.</span></p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-get">GET</span><span class="path">/api/profiles?page=&amp;pageSize=</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Paged listing (pageSize clamped to 100): <code>{ items: [{id, emailAddress, phoneNumber,
+        emailConfirmed, phoneNumberConfirmed, deviceId, createdAtUtc}], page, pageSize, totalCount }</code>.</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-get">GET</span><span class="path">/api/profiles/devices</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>The caller's own devices over time — profile resolved from the token, never from the URL.
+        Exactly one entry has <code>isActive: true</code>.</p>
+        <div class="io"><div style="grid-column: 1 / -1"><h5>Response 200</h5><pre>[ { "deviceId": "GUID", "name": "Ada's iPhone", "platform": "ios",
+    "model": "iPhone 16", "isActive": true,
+    "linkedAtUtc": "…", "releasedAtUtc": null },
+  { "deviceId": "GUID", "name": "Old Pixel", "platform": "android",
+    "model": "Pixel 9", "isActive": false,
+    "linkedAtUtc": "…", "releasedAtUtc": "…" } ]</pre></div></div>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-get">GET</span><span class="path">/api/profiles/activities?page=&amp;pageSize=</span><span class="authb a-any">🔒 any</span></div>
+      <div class="ep-body">
+        <p>The caller's audit feed, newest first. Types: AuthCreated, ProfileCreated, EmailVerified,
+        PhoneNumberSet, PhoneVerified, ProfileCompleted, LoggedIn, PasswordChanged, PasswordReset,
+        PinSet, PinChanged, PinReset, DeviceChanged, KycVerified, AccountsProvisioned.</p>
+        <div class="io"><div style="grid-column: 1 / -1"><h5>Response 200</h5><pre>{ "items": [ { "id": "GUID", "profileId": "GUID",
+      "type": "DeviceChanged",
+      "description": "Active device changed to 'Ada's iPhone'.",
+      "deviceId": "GUID", "ipAddress": "105.112.24.8",
+      "createdAtUtc": "…" } ],
+  "page": 1, "pageSize": 20, "totalCount": 42 }</pre></div></div>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/profiles/set-pin</span><span class="authb a-act">🔒 profile-active</span></div>
+      <div class="ep-body">
+        <p>First-time 4-digit transaction PIN. Stored as PBKDF2-SHA256 with a fresh per-profile salt;
+        verified during transactions, not by this API. Once set, only pin-change or pin-reset may alter it.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID", "pin": "1234" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "hasSetTransactionPin": true,
+  "updatedAtUtc": "…" }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> not 4 digits · <b>403</b> device or type gate · <b>409</b> PIN already set</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/profiles/pin-change</span><span class="authb a-act">🔒 profile-active</span></div>
+      <div class="ep-body">
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "currentPin": "1234", "newPin": "5678" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "hasSetTransactionPin": true,
+  "updatedAtUtc": "…" }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> current PIN incorrect · <b>422</b> no PIN set yet</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/profiles/initiate-pin-reset</span><span class="authb a-act">🔒 profile-active</span></div>
+      <div class="ep-body">
+        <p>Forgot-PIN path: emails an OTP. Refuses if no PIN is set.</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID" }</pre></div>
+          <div><h5>Response 202</h5><pre>{ "profileId": "GUID", "channel": "email",
+  "retrievalCode": "…", "expiresAtUtc": "…" }</pre></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/profiles/pin-reset</span><span class="authb a-act">🔒 profile-active</span></div>
+      <div class="ep-body">
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "deviceId": "GUID",
+  "retrievalCode": "…", "otp": "123456",
+  "newPin": "4321" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "profileId": "GUID",
+  "hasSetTransactionPin": true,
+  "updatedAtUtc": "…" }</pre></div>
+        </div>
+        <p class="errs"><b>400</b> bad code · <b>429</b> lockout</p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-put">PUT</span><span class="path">/api/profiles/{id}/phone</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Post-onboarding phone <em>change</em>: sets a new number (uniqueness-checked, resets confirmation).
+        Follow with <code>request-phone-otp</code> + <code>otp/verify · Phone</code>.
+        Body: <code>{ "phoneNumber", "deviceId" }</code> → <code>{ id, phoneNumber, phoneNumberConfirmed:false, updatedAtUtc }</code>.
+        <span class="muted">409 if another profile uses the number.</span></p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/api/profiles/{id}/request-email-otp&nbsp;&nbsp;·&nbsp;&nbsp;…/request-phone-otp</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Re-confirmation OTPs for an existing profile — email by email, phone by WhatsApp. Empty body.
+        Both return <code>{ profileId, channel, retrievalCode, expiresAtUtc }</code>; verify via
+        <code>otp/verify</code>. <span class="muted">409 when already confirmed; 422 when no phone is set.</span></p>
+      </div>
+    </div>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-get">GET</span><span class="path">/api/devices/{id}</span><span class="authb a-anon">anon</span></div>
+      <div class="ep-body">
+        <p>Device lookup: <code>{ id, deviceIdentifier, name, platform, osName, osVersion, manufacturer,
+        model, appVersion, createdAtUtc, updatedAtUtc }</code>. Registration only ever happens inside
+        the OTP-protected flows.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------- WEBHOOKS ---------- -->
+  <section id="api-webhooks">
+    <p class="eyebrow">13 · webhooks</p>
+    <h2>Money in</h2>
+
+    <div class="ep">
+      <div class="ep-head"><span class="chip m-post">POST</span><span class="path">/webhook/virtual-account-credit</span><span class="authb a-anon">anon + HMAC</span></div>
+      <div class="ep-body">
+        <p>Called by the virtual-account provider when a customer's collection account is credited. When
+        <code>DigitVirtual:WebhookSecret</code> is configured, the <code>X-Signature</code> header must be
+        the lowercase-hex <b>HMAC-SHA256 of the raw body</b> (fixed-time compared); when unset (dev only),
+        verification is skipped. The credit is stored idempotently by <code>transactionRef</code> — the
+        <code>PostCbaCreditsJob</code> then settles it into the mapped CBA naira account, minus the
+        configured charges. A storage failure returns 500 so the provider redelivers rather than losing
+        the credit; a malformed payload is acknowledged and dropped (redelivery cannot fix it).</p>
+        <div class="io">
+          <div><h5>Request</h5><pre>{ "transactionRef": "VA-2026-000123",
+  "amount": 15000.00,
+  "account": "8812345678",
+  "sourceAccount": "0123456789",
+  "sourceBank": "GTBank",
+  "senderName": "CHIDI OKafor",
+  "narration": "rent",
+  "transactionDate": "…",
+  "status": "SUCCESSFUL" }</pre></div>
+          <div><h5>Response 200</h5><pre>{ "status": "received",
+  "receivedAtUtc": "…" }
+// or { "status": "ignored", … }
+//    for malformed payloads</pre></div>
+        </div>
+        <p class="errs"><b>401</b> invalid signature · <b>500</b> storage failure — provider should redeliver</p>
+        <p class="note">Only credits with <code>status: SUCCESSFUL</code> are settled. Transient posting
+        failures retry every ~2 s up to <code>MaxPostAttempts</code> (default 10); permanent 4xx rejections
+        dead-letter with the error preserved; a CBA "duplicate reference" reply counts as settled.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------- APPENDIX ---------- -->
+  <section id="api-appendix">
+    <p class="eyebrow">14 · appendix</p>
+    <h2>Reference tables</h2>
+
+    <h3>OTP purposes</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Purpose</th><th>Sent via</th><th>Target</th><th>Verified by</th><th>On success</th></tr></thead>
+      <tbody>
+        <tr><td><code>Onboarding</code></td><td>email</td><td>email</td><td>verify-auth</td><td>SSO auth + staging record + tokens</td></tr>
+        <tr><td><code>PhoneConfirmation</code></td><td>WhatsApp/SMS</td><td>phone</td><td>otp/verify · Phone</td><td>phone confirmed</td></tr>
+        <tr><td><code>EmailConfirmation</code></td><td>email</td><td>email</td><td>otp/verify · Email</td><td>email confirmed</td></tr>
+        <tr><td><code>PhoneConfirmation</code> (KYC path)</td><td>WhatsApp/SMS</td><td>phone from BVN/NIN record</td><td>otp/verify · Phone</td><td>phone confirmed (id verified separately at complete-kyc)</td></tr>
+        <tr><td><code>DeviceChange</code></td><td>email</td><td>email</td><td>change-device</td><td>binding moved · gate opens</td></tr>
+        <tr><td><code>DeviceRegistration</code></td><td>email</td><td>email</td><td>resume</td><td>device registered · record rebuilt</td></tr>
+        <tr><td><code>PinReset</code></td><td>email</td><td>email</td><td>pin-reset</td><td>new PIN hash</td></tr>
+        <tr><td><code>PasswordReset</code></td><td>email</td><td>email</td><td>password-reset</td><td>SSO password reset</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>KYC statuses</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>kycStatus</th><th>Meaning</th><th>Recoverable?</th></tr></thead>
+      <tbody>
+        <tr><td><code>NotStarted</code></td><td>No KYC attempt yet</td><td>—</td></tr>
+        <tr><td><code>Pending</code></td><td>Identity looked up, liveness session open, awaiting complete-kyc</td><td>in progress</td></tr>
+        <tr><td><code>Approved</code></td><td>Liveness + face match passed; identity verified, accounts provisioned</td><td>terminal (good)</td></tr>
+        <tr><td><code>LivenessFailed</code></td><td>The liveness check did not pass</td><td>yes — new session</td></tr>
+        <tr><td><code>FaceMismatch</code></td><td>The selfie did not match the BVN/NIN photo</td><td>yes — new session</td></tr>
+        <tr><td><code>ProvisioningFailed</code></td><td>Identity verified but account setup incomplete</td><td>auto-retried at create-profile / login / refresh</td></tr>
+        <tr><td><code>Retry</code> / <code>Rejected</code> / <code>Failed</code></td><td>Provider asked for resubmission / permanently rejected / could not complete</td><td>Retry: yes · Rejected: no · Failed: yes</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Status codes</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Code</th><th>Meaning here</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">200 / 201 / 202</td><td>Success · created · accepted (OTP dispatched)</td></tr>
+        <tr><td class="mono">400</td><td>Validation failure, wrong OTP, malformed body — the message names the field or rule</td></tr>
+        <tr><td class="mono">401</td><td>Missing/invalid token, or wrong credentials at login</td></tr>
+        <tr><td class="mono">403</td><td>Wrong token type for this endpoint, device not the active one, or token resolves to no profile</td></tr>
+        <tr><td class="mono">404</td><td>Profile or device not found</td></tr>
+        <tr><td class="mono">409</td><td>Conflict: already exists / already confirmed / device in use / PIN already set</td></tr>
+        <tr><td class="mono">422</td><td>Preconditions unmet: unknown device, unconfirmed phone, no KYC record, nothing to resume</td></tr>
+        <tr><td class="mono">429</td><td>Resend cooldown (60 s) or OTP attempt lockout (5 tries)</td></tr>
+        <tr><td class="mono">502 / 503</td><td>A dependency (SSO, Message Centre, KYC, liveness, core banking) rejected the call or is unreachable — nothing was persisted</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <footer>
+    ProfileSvr Handbook · Muuvly · generated from the live codebase (67 tests passing) ·
+    companion diagrams in the <b>ProfileSvr Flow Atlas</b> artifact · Postman collection in
+    <span class="mono">postman/ProfileSvr.postman_collection.json</span>
+  </footer>
+</div>
